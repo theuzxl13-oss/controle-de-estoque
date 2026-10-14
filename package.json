@@ -10,7 +10,9 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:db": "bash scripts/test-db.sh"
+    "test:db": "bash scripts/test-db.sh",
+    "demo:dev": "npm --prefix demo run dev",
+    "demo:build": "npm --prefix demo run build"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",
