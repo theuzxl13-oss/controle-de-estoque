@@ -2,43 +2,49 @@ import type { PaymentMethod } from "@erp/domain/sale";
 
 export type Id = string;
 
+/** Tipo de produto da revenda. Gás e água usam vasilhame retornável. */
+export type ProductKind = "gas" | "agua" | "acessorio" | "outro";
+
 export interface Product {
   id: Id;
   code: number;
-  barcode: string;
+  kind: ProductKind;
   name: string;
-  description: string;
-  category: string;
-  brand: string;
-  supplierId: Id | null;
-  cost: number;
-  price: number;
-  stock: number;
+  /** Ex.: "13 kg", "20 L". */
+  capacity: string;
+  /** Tem vasilhame retornável (botijão/galão): controla cheios e vazios. */
+  returnable: boolean;
+  /** Preço na troca (cliente entrega o vazio) — ou preço único se não retornável. */
+  priceExchange: number;
+  /** Preço completo (cliente leva o vasilhame). */
+  priceFull: number;
+  /** Custo do conteúdo (recarga) — ou custo unitário se não retornável. */
+  costExchange: number;
+  /** Custo do vasilhame vazio. */
+  costShell: number;
+  /** Estoque cheio (ou estoque simples se não retornável). */
+  stockFull: number;
+  /** Vasilhames vazios em estoque. */
+  stockEmpty: number;
   minStock: number;
-  unit: string;
-  location: string;
   active: boolean;
+  barcode: string;
   ncm: string;
-  cest: string;
-  origin: number;
-  cfop: string;
+  anpCode: string;
 }
+
+/** Como o item foi vendido. */
+export type SaleMode = "troca" | "completo" | "unidade";
 
 export interface Customer {
   id: Id;
-  personType: "PF" | "PJ";
-  document: string;
   name: string;
-  tradeName: string;
   phone: string;
-  whatsapp: string;
-  email: string;
-  zip: string;
+  document: string;
   street: string;
   number: string;
   district: string;
-  city: string;
-  state: string;
+  reference: string;
   notes: string;
   createdAt: string;
 }
@@ -60,22 +66,24 @@ export interface Supplier {
   notes: string;
 }
 
+export type StockBucket = "cheio" | "vazio";
+
 export type MovementType =
   | "purchase_receipt"
+  | "shell_return"
   | "sale"
+  | "shell_in"
   | "sale_cancellation"
   | "manual_entry"
   | "manual_exit"
-  | "adjustment"
-  | "inventory";
+  | "adjustment";
 
 export interface Movement {
   id: Id;
   productId: Id;
+  bucket: StockBucket;
   type: MovementType;
   quantity: number;
-  before: number;
-  after: number;
   reason: string;
   reference: string;
   user: string;
@@ -110,19 +118,24 @@ export interface PurchaseOrder {
 export interface SaleItem {
   productId: Id;
   name: string;
-  unit: string;
+  mode: SaleMode;
   quantity: number;
   unitPrice: number;
-  discount: number;
   total: number;
   unitCost: number;
 }
 
-export interface SalePayment {
-  method: PaymentMethod;
-  amount: number;
-  tendered?: number;
-  installments?: number;
+export type DeliveryStatus = "pendente" | "em_rota" | "entregue";
+
+export interface Delivery {
+  status: DeliveryStatus;
+  address: string;
+  reference: string;
+  driver: string | null;
+  /** Troco para (pagamento em dinheiro na entrega). */
+  changeFor?: number;
+  dispatchedAt?: string;
+  deliveredAt?: string;
 }
 
 export interface Sale {
@@ -131,14 +144,20 @@ export interface Sale {
   customerId: Id | null;
   seller: string;
   at: string;
+  channel: "balcao" | "entrega";
   items: SaleItem[];
+  deliveryFee: number;
   subtotal: number;
   discount: number;
   total: number;
-  change: number;
-  payments: SalePayment[];
+  /** Troco devolvido no balcão. */
+  change?: number;
+  method: PaymentMethod;
+  /** Pagamento já recebido? Em entregas, o entregador recebe na porta. */
+  paid: boolean;
   status: "completed" | "cancelled";
   cancelReason?: string;
+  delivery?: Delivery;
 }
 
 export interface FinancialTitle {

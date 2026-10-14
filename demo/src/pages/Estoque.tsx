@@ -1,9 +1,9 @@
 import { ArrowLeftRight, Download } from "lucide-react";
 import { useMemo, useState } from "react";
 
-import { Badge, Button, Card, dateTime, Field, Input, Modal, Notice, num, PageHeader, SearchInput, Select, Table, useFeedback, usePagination } from "../components/ui";
+import { Badge, Button, Card, CardHeader, dateTime, Field, Input, Modal, Notice, num, PageHeader, SearchInput, Select, Table, useFeedback, usePagination } from "../components/ui";
 import { downloadCsv } from "../csv";
-import type { MovementType } from "../data/types";
+import type { MovementType, StockBucket } from "../data/types";
 import { MOVEMENT_LABELS } from "../labels";
 import { useStore } from "../store";
 
@@ -23,36 +23,62 @@ export function Estoque() {
     });
   }, [movements, products, q, type]);
   const { slice, control } = usePagination(filtered, 15);
+  const active = products.filter((p) => p.active);
 
   return (
     <>
       <PageHeader
-        title="Movimentações de estoque"
-        description="Histórico completo: data, usuário, quantidade, motivo e operação de origem."
+        title="Estoque"
+        description="Cheios, vazios e histórico completo de movimentações (data, usuário, quantidade e motivo)."
         actions={
           <>
             <Button
               onClick={() =>
                 downloadCsv(
                   "movimentacoes.csv",
-                  ["data", "produto", "tipo", "quantidade", "saldo_apos", "motivo", "referencia", "usuario"],
-                  filtered.map((m) => [
-                    dateTime(m.at), products.find((p) => p.id === m.productId)?.name ?? "", MOVEMENT_LABELS[m.type],
-                    m.quantity, m.after, m.reason, m.reference, m.user,
-                  ]),
+                  ["data", "produto", "estoque", "tipo", "quantidade", "motivo", "referencia", "usuario"],
+                  filtered.map((m) => [dateTime(m.at), products.find((p) => p.id === m.productId)?.name ?? "", m.bucket, MOVEMENT_LABELS[m.type], m.quantity, m.reason, m.reference, m.user]),
                 )
               }
             >
-              <Download className="size-4" /> Exportar CSV
+              <Download className="size-4" /> Exportar
             </Button>
             {(can("stock.move") || can("stock.adjust")) && (
               <Button variant="primary" onClick={() => setOpen(true)}>
-                <ArrowLeftRight className="size-4" /> Nova movimentação
+                <ArrowLeftRight className="size-4" /> Lançar movimentação
               </Button>
             )}
           </>
         }
       />
+
+      <Card className="mb-4">
+        <CardHeader title="Posição atual" subtitle="Vazios voltam para a distribuidora na próxima carga" />
+        <Table
+          head={
+            <>
+              <th>Produto</th>
+              <th className="text-center">Cheios</th>
+              <th className="text-center">Vazios</th>
+              <th className="text-center">Total de vasilhames</th>
+              <th className="text-center">Mínimo</th>
+            </>
+          }
+        >
+          {active.map((p) => (
+            <tr key={p.id}>
+              <td className="font-medium">{p.name}</td>
+              <td className="text-center">
+                <Badge tone={p.stockFull <= 0 ? "bad" : p.stockFull <= p.minStock ? "warn" : "good"}>{p.stockFull}</Badge>
+              </td>
+              <td className="tabular text-center text-fg-2">{p.returnable ? p.stockEmpty : "—"}</td>
+              <td className="tabular text-center text-fg-2">{p.returnable ? p.stockFull + p.stockEmpty : "—"}</td>
+              <td className="tabular text-center text-fg-3">{p.minStock}</td>
+            </tr>
+          ))}
+        </Table>
+      </Card>
+
       <Card>
         <div className="flex flex-wrap gap-2 border-b border-line p-3">
           <SearchInput value={q} onChange={setQ} placeholder="Produto ou motivo" />
@@ -81,7 +107,10 @@ export function Estoque() {
           {slice.map((m) => (
             <tr key={m.id}>
               <td className="tabular whitespace-nowrap text-fg-2">{dateTime(m.at)}</td>
-              <td className="font-medium">{products.find((p) => p.id === m.productId)?.name}</td>
+              <td>
+                <span className="font-medium">{products.find((p) => p.id === m.productId)?.name.split(" (")[0]}</span>
+                <span className="block text-xs text-fg-3">{m.bucket === "cheio" ? "cheio" : "vasilhame vazio"}</span>
+              </td>
               <td>
                 <Badge tone={m.quantity > 0 ? "good" : "bad"}>{MOVEMENT_LABELS[m.type]}</Badge>
               </td>
@@ -110,28 +139,31 @@ function MovementForm({ onClose }: { onClose: () => void }) {
   const types: { value: ManualType; label: string }[] = [
     ...(can("stock.move")
       ? [
-          { value: "manual_entry" as const, label: "Entrada de mercadoria" },
-          { value: "manual_exit" as const, label: "Saída (perda, avaria, consumo)" },
+          { value: "manual_entry" as const, label: "Entrada (ex.: vasilhame comprado, devolução)" },
+          { value: "manual_exit" as const, label: "Saída (ex.: vazamento, vasilhame condenado, perda)" },
         ]
       : []),
-    ...(can("stock.adjust") ? [{ value: "adjustment" as const, label: "Ajuste de saldo (inventário)" }] : []),
+    ...(can("stock.adjust") ? [{ value: "adjustment" as const, label: "Ajuste após contagem" }] : []),
   ];
+  const active = products.filter((p) => p.active);
   const [type, setType] = useState<ManualType>(types[0].value);
-  const [productId, setProductId] = useState(products[0].id);
+  const [productId, setProductId] = useState(active[0].id);
+  const [bucket, setBucket] = useState<StockBucket>("cheio");
   const [qty, setQty] = useState(1);
   const [reason, setReason] = useState("");
-  const product = products.find((p) => p.id === productId)!;
-  const after = type === "adjustment" ? qty : type === "manual_entry" ? product.stock + qty : product.stock - qty;
+  const p = products.find((x) => x.id === productId)!;
+  const current = bucket === "cheio" ? p.stockFull : p.stockEmpty;
+  const after = type === "adjustment" ? qty : type === "manual_entry" ? current + qty : current - qty;
 
   return (
     <Modal
       open
-      title="Nova movimentação"
+      title="Lançar movimentação"
       onClose={onClose}
       footer={
         <>
           <Button onClick={onClose}>Cancelar</Button>
-          <Button variant="primary" onClick={() => run(() => moveStock(productId, type, qty, reason), "Movimentação registrada.") && onClose()}>
+          <Button variant="primary" onClick={() => run(() => moveStock(productId, bucket, type, qty, reason), "Movimentação registrada.") && onClose()}>
             Registrar
           </Button>
         </>
@@ -147,32 +179,40 @@ function MovementForm({ onClose }: { onClose: () => void }) {
             ))}
           </Select>
         </Field>
-        <Field label="Produto" className="sm:col-span-2">
-          <Select value={productId} onChange={(e) => setProductId(e.target.value)}>
-            {products.filter((p) => p.active).map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.code} — {p.name} (saldo {num(p.stock)})
+        <Field label="Produto">
+          <Select
+            value={productId}
+            onChange={(e) => {
+              setProductId(e.target.value);
+              if (!products.find((x) => x.id === e.target.value)?.returnable) setBucket("cheio");
+            }}
+          >
+            {active.map((x) => (
+              <option key={x.id} value={x.id}>
+                {x.name}
               </option>
             ))}
           </Select>
         </Field>
-        <Field label={type === "adjustment" ? "Novo saldo (contado)" : "Quantidade"}>
-          <Input type="number" min={0} step="1" value={qty} onChange={(e) => setQty(Number(e.target.value))} />
+        <Field label="Estoque de">
+          <Select value={bucket} disabled={!p.returnable} onChange={(e) => setBucket(e.target.value as StockBucket)}>
+            <option value="cheio">{p.returnable ? `Cheios (${p.stockFull})` : `Unidades (${p.stockFull})`}</option>
+            {p.returnable && <option value="vazio">Vazios ({p.stockEmpty})</option>}
+          </Select>
         </Field>
-        <Field label="Saldo após a movimentação">
-          <Input value={`${num(after)} ${product.unit}`} disabled className={after < 0 ? "text-bad" : ""} />
+        <Field label={type === "adjustment" ? "Quantidade contada" : "Quantidade"}>
+          <Input type="number" min={0} value={qty} onChange={(e) => setQty(Number(e.target.value))} />
+        </Field>
+        <Field label="Saldo após">
+          <Input value={num(after)} disabled className={after < 0 ? "text-bad" : ""} />
         </Field>
         <Field label="Motivo *" className="sm:col-span-2">
-          <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Ex.: avaria no transporte" />
+          <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Ex.: botijão com vazamento devolvido à distribuidora" />
         </Field>
       </div>
       {after < 0 && (
         <div className="mt-3">
-          <Notice tone="warn">
-            {allowNegativeStock
-              ? "O saldo ficará negativo (permitido pela configuração da empresa)."
-              : "Estoque negativo não é permitido — a movimentação será bloqueada."}
-          </Notice>
+          <Notice tone="warn">{allowNegativeStock ? "O saldo ficará negativo (permitido pela configuração)." : "Estoque negativo não é permitido — será bloqueado."}</Notice>
         </div>
       )}
     </Modal>

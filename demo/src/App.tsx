@@ -7,6 +7,7 @@ import { useStore } from "./store";
 import { Clientes } from "./pages/Clientes";
 import { Compras } from "./pages/Compras";
 import { Dashboard } from "./pages/Dashboard";
+import { Entregas } from "./pages/Entregas";
 import { Estoque } from "./pages/Estoque";
 import { Financeiro } from "./pages/Financeiro";
 import { Fornecedores } from "./pages/Fornecedores";
@@ -18,6 +19,7 @@ import { Vendas } from "./pages/Vendas";
 const PAGES: Record<string, () => React.ReactElement> = {
   dashboard: Dashboard,
   pdv: Pdv,
+  entregas: Entregas,
   vendas: Vendas,
   clientes: Clientes,
   produtos: Produtos,

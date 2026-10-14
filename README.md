@@ -5,7 +5,7 @@ fiscais brasileiras. Next.js 16 + TypeScript + Supabase (PostgreSQL, Auth,
 Storage, RLS), com deploy na Vercel.
 
 - Arquitetura, modelagem, fluxos, segurança e plano: [`docs/ARQUITETURA.md`](docs/ARQUITETURA.md)
-- **Demonstração navegável** (dados fictícios): https://theuzxl13-oss.github.io/controle-de-estoque/ — código em [`demo/`](demo/README.md)
+- **Demonstração navegável — revenda de gás e água** (dados fictícios): https://theuzxl13-oss.github.io/controle-de-estoque/ — código em [`demo/`](demo/README.md)
 - **Etapa atual:** 1 de 8 concluída (arquitetura + banco). Ainda **não** está
   pronto para produção.
 

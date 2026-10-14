@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { formatDocument, isValidCnpj, isValidCpf, normalizeDocument } from "@erp/validation/documents";
 
 import { Badge, brl, Button, Card, date, Field, Input, Modal, PageHeader, SearchInput, Table, Textarea, useFeedback } from "../components/ui";
+import { productSupplier } from "../data/seed";
 import type { Supplier } from "../data/types";
 import { PURCHASE_STATUS } from "../labels";
 import { useStore } from "../store";
@@ -30,11 +31,11 @@ export function Fornecedores() {
     <>
       <PageHeader
         title="Fornecedores"
-        description="Cadastro, produtos fornecidos e histórico de pedidos."
+        description="Distribuidoras de gás, água e acessórios, com histórico de pedidos e cargas."
         actions={
           can("suppliers.manage") && (
             <Button variant="primary" onClick={() => setEditing({ ...empty })}>
-              <Plus className="size-4" /> Novo fornecedor
+              <Plus className="size-4" /> Nova distribuidora
             </Button>
           )
         }
@@ -70,7 +71,7 @@ export function Fornecedores() {
               </td>
               <td className="text-fg-2">{s.leadDays} dias</td>
               <td className="text-fg-2">{s.paymentTerms}</td>
-              <td className="tabular text-right">{products.filter((p) => p.supplierId === s.id).length}</td>
+              <td className="tabular text-right">{products.filter((p) => productSupplier[p.id] === s.id).length}</td>
               <td className="text-right">
                 {can("suppliers.manage") && (
                   <Button
@@ -100,7 +101,7 @@ export function Fornecedores() {
           </p>
           <h3 className="mt-4 mb-2 text-sm font-semibold">Produtos fornecidos</h3>
           <div className="flex flex-wrap gap-1.5">
-            {products.filter((p) => p.supplierId === detail.id).map((p) => (
+            {products.filter((p) => productSupplier[p.id] === detail.id).map((p) => (
               <Badge key={p.id}>{p.name}</Badge>
             ))}
           </div>
@@ -159,7 +160,7 @@ function SupplierForm({ draft, onClose, onSave }: { draft: Draft; onClose: () =>
     <Modal
       open
       size="lg"
-      title={d.id ? "Editar fornecedor" : "Novo fornecedor"}
+      title={d.id ? "Editar fornecedor" : "Nova distribuidora"}
       onClose={onClose}
       footer={
         <>

@@ -1,6 +1,9 @@
-# Demonstração navegável (GitHub Pages)
+# Demonstração navegável — revenda de gás e água (GitHub Pages)
 
-Versão estática das telas do ERP com **dados fictícios**, para visualizar o
+Versão estática do ERP adaptada para **revenda de gás (GLP) e água mineral**,
+com **dados fictícios**: venda rápida (troca × completo), busca do cliente pelo
+telefone, painel de entregas, estoque de cheios e vazios, cargas da
+distribuidora com devolução de vazios e lembretes de recompra. É uma versão estática das telas, para visualizar o
 layout e a navegação. Não grava nada (recarregar restaura os dados) e não
 emite notas fiscais. O sistema real é o app Next.js + Supabase da raiz.
 

@@ -1,5 +1,6 @@
 import {
   BarChart3,
+  Bike,
   Boxes,
   FileText,
   LayoutDashboard,
@@ -10,7 +11,7 @@ import {
   PanelLeftOpen,
   Receipt,
   ShoppingCart,
-  Store,
+  Flame,
   Sun,
   Truck,
   Users,
@@ -27,13 +28,14 @@ import { cx } from "./ui";
 
 export const NAV: { route: string; label: string; icon: typeof Package; permission: Permission; group: string }[] = [
   { route: "dashboard", label: "Painel", icon: LayoutDashboard, permission: "dashboard.view", group: "Geral" },
-  { route: "pdv", label: "PDV — Frente de caixa", icon: ShoppingCart, permission: "sales.create", group: "Vendas" },
+  { route: "pdv", label: "Vender", icon: ShoppingCart, permission: "sales.create", group: "Vendas" },
+  { route: "entregas", label: "Entregas", icon: Bike, permission: "sales.create", group: "Vendas" },
   { route: "vendas", label: "Vendas", icon: Receipt, permission: "sales.view_own", group: "Vendas" },
   { route: "clientes", label: "Clientes", icon: Users, permission: "customers.view", group: "Vendas" },
-  { route: "produtos", label: "Produtos", icon: Package, permission: "products.view", group: "Estoque" },
-  { route: "estoque", label: "Movimentações", icon: Boxes, permission: "stock.view", group: "Estoque" },
-  { route: "compras", label: "Pedidos de compra", icon: ClipboardList, permission: "purchases.view", group: "Compras" },
-  { route: "fornecedores", label: "Fornecedores", icon: Truck, permission: "suppliers.view", group: "Compras" },
+  { route: "produtos", label: "Produtos e preços", icon: Package, permission: "products.view", group: "Estoque" },
+  { route: "estoque", label: "Cheios e vazios", icon: Boxes, permission: "stock.view", group: "Estoque" },
+  { route: "compras", label: "Pedidos de carga", icon: ClipboardList, permission: "purchases.view", group: "Compras" },
+  { route: "fornecedores", label: "Distribuidoras", icon: Truck, permission: "suppliers.view", group: "Compras" },
   { route: "financeiro", label: "Financeiro", icon: Wallet, permission: "finance.view", group: "Gestão" },
   { route: "fiscal", label: "Notas fiscais", icon: FileText, permission: "fiscal.view", group: "Gestão" },
   { route: "relatorios", label: "Relatórios", icon: BarChart3, permission: "reports.view", group: "Gestão" },
@@ -67,11 +69,11 @@ export function Layout({ route, children }: { route: string; children: ReactNode
     <nav className="flex h-full flex-col gap-4 overflow-y-auto px-3 py-4" aria-label="Menu principal">
       <div className={cx("flex items-center gap-2 px-2", collapsed && "lg:justify-center lg:px-0")}>
         <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-accent text-accent-fg">
-          <Store className="size-4.5" />
+          <Flame className="size-4.5" />
         </span>
         <span className={cx("leading-tight", collapsed && "lg:hidden")}>
-          <span className="block text-sm font-semibold">ERP Gestão</span>
-          <span className="block text-[11px] text-fg-3">Loja Exemplo</span>
+          <span className="block text-sm font-semibold">Gás Exemplo</span>
+          <span className="block text-[11px] text-fg-3">Revenda de gás e água</span>
         </span>
       </div>
       {groups.map((g) => (
@@ -109,7 +111,7 @@ export function Layout({ route, children }: { route: string; children: ReactNode
   return (
     <div className="min-h-screen">
       <div className="no-print sticky top-0 z-40 bg-warn-soft px-4 py-1.5 text-center text-xs font-medium text-warn">
-        DEMONSTRAÇÃO — dados fictícios, nada é gravado (recarregar a página restaura os dados). Notas fiscais não são emitidas.
+        DEMONSTRAÇÃO — dados fictícios<span className="hidden sm:inline">, nada é gravado (recarregar a página restaura os dados). Notas fiscais não são emitidas</span>.
       </div>
       <div className="flex">
         <aside
@@ -167,7 +169,7 @@ export function Layout({ route, children }: { route: string; children: ReactNode
               {dark ? <Sun className="size-5" /> : <Moon className="size-5" />}
             </button>
           </header>
-          <main className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6">{children}</main>
+          <main className="mx-auto w-full max-w-7xl px-4 pt-6 pb-24 sm:px-6 lg:pb-6">{children}</main>
         </div>
       </div>
     </div>

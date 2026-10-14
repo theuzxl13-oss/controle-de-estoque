@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { formatDocument } from "@erp/validation/documents";
 
 import { Badge, brl, Button, buttonClass, Card, date, Field, Input, Modal, Notice, num, PageHeader, Select, Table, Tabs, Textarea, useFeedback } from "../components/ui";
-import { COMPANY } from "../data/seed";
+import { COMPANY, productSupplier } from "../data/seed";
 import type { PurchaseItem, PurchaseOrder, PurchaseStatus } from "../data/types";
 import { PURCHASE_STATUS } from "../labels";
 import { useStore } from "../store";
@@ -35,7 +35,7 @@ export function Compras() {
     <>
       <PageHeader
         title="Pedidos de compra"
-        description="Pedidos a fornecedores, PDF para envio e recebimento (parcial ou total) com entrada no estoque."
+        description="Cargas da distribuidora: pedido com PDF, recebimento (parcial ou total) com entrada de cheios e devolução de vazios."
         actions={
           can("purchases.manage") && (
             <Button variant="primary" onClick={() => setEditing("new")}>
@@ -128,7 +128,7 @@ function OrderForm({ order, onClose, onSaved }: { order: PurchaseOrder | null; o
   const [pick, setPick] = useState("");
 
   const suggestions = products.filter((p) => p.active && !items.some((i) => i.productId === p.id));
-  const sorted = [...suggestions].sort((a, b) => Number(b.supplierId === supplierId) - Number(a.supplierId === supplierId));
+  const sorted = [...suggestions].sort((a, b) => Number(productSupplier[b.id] === supplierId) - Number(productSupplier[a.id] === supplierId));
   const totals = orderTotals({ items, discount, freight });
 
   const save = () => {
@@ -198,7 +198,7 @@ function OrderForm({ order, onClose, onSaved }: { order: PurchaseOrder | null; o
             <option value="">Selecione…</option>
             {sorted.map((p) => (
               <option key={p.id} value={p.id}>
-                {p.code} — {p.name} {p.supplierId === supplierId ? "★" : ""} (saldo {num(p.stock)})
+                {p.code} — {p.name} {productSupplier[p.id] === supplierId ? "★" : ""} (cheios {num(p.stockFull)}{p.returnable ? `, vazios ${p.stockEmpty}` : ""})
               </option>
             ))}
           </Select>
@@ -207,14 +207,14 @@ function OrderForm({ order, onClose, onSaved }: { order: PurchaseOrder | null; o
           disabled={!pick}
           onClick={() => {
             const p = products.find((x) => x.id === pick)!;
-            setItems([...items, { productId: p.id, quantity: Math.max(p.minStock * 2 - p.stock, 1), unitPrice: p.cost, received: 0 }]);
+            setItems([...items, { productId: p.id, quantity: Math.max(p.returnable ? p.stockEmpty : p.minStock * 2 - p.stockFull, 1), unitPrice: p.costExchange, received: 0 }]);
             setPick("");
           }}
         >
           Adicionar
         </Button>
       </div>
-      <p className="mt-1 text-xs text-fg-3">★ produtos deste fornecedor. A quantidade sugerida repõe o dobro do estoque mínimo.</p>
+      <p className="mt-1 text-xs text-fg-3">★ produtos deste fornecedor. Para botijões e galões, a quantidade sugerida é o número de vazios em estoque (troca 1 por 1).</p>
 
       <div className="mt-3 rounded-lg border border-line">
         <Table
@@ -236,7 +236,7 @@ function OrderForm({ order, onClose, onSaved }: { order: PurchaseOrder | null; o
               <tr key={it.productId}>
                 <td>
                   {p.name}
-                  <span className="block text-xs text-fg-3">Último custo {brl(p.cost)}</span>
+                  <span className="block text-xs text-fg-3">Custo atual {brl(p.costExchange)}{p.returnable ? ` · ${p.stockEmpty} vazios para devolver` : ""}</span>
                 </td>
                 <td>
                   <Input type="number" min={1} value={it.quantity} onChange={(e) => update({ quantity: Number(e.target.value) })} />
@@ -296,6 +296,7 @@ function OrderDetail({ order, onClose, onEdit }: { order: PurchaseOrder; onClose
   const [mode, setMode] = useState<"view" | "receive" | "pdf">("view");
   const [qty, setQty] = useState<Record<string, number>>({});
   const [invoice, setInvoice] = useState("");
+  const [returnEmpties, setReturnEmpties] = useState(true);
   const supplier = suppliers.find((s) => s.id === order.supplierId)!;
   const t = orderTotals(order);
   const canReceive = can("purchases.receive") && ["sent", "confirmed", "partially_received"].includes(order.status);
@@ -319,7 +320,7 @@ function OrderDetail({ order, onClose, onEdit }: { order: PurchaseOrder; onClose
             <Button onClick={() => setMode("view")}>Voltar</Button>
             <Button
               variant="primary"
-              onClick={() => run(() => receivePurchase(order.id, qty, invoice), "Recebimento registrado e estoque atualizado.") && setMode("view")}
+              onClick={() => run(() => receivePurchase(order.id, qty, invoice, returnEmpties), "Recebimento registrado e estoque atualizado.") && setMode("view")}
             >
               <PackageCheck className="size-4" /> Confirmar recebimento
             </Button>
@@ -368,7 +369,14 @@ function OrderDetail({ order, onClose, onEdit }: { order: PurchaseOrder; onClose
       </div>
       {mode === "receive" && (
         <div className="mt-3 space-y-3">
-          <Notice>Confira as quantidades efetivamente entregues. O estoque só aumenta com esta confirmação; o restante continua pendente.</Notice>
+          <Notice>Confira as quantidades efetivamente entregues. O estoque de cheios só aumenta com esta confirmação; o restante continua pendente.</Notice>
+          <label className="flex items-start gap-2 text-sm">
+            <input type="checkbox" className="mt-0.5 size-4" checked={returnEmpties} onChange={(e) => setReturnEmpties(e.target.checked)} />
+            <span>
+              <b>Devolvi os vazios na troca</b> (botijões/galões)
+              <span className="block text-xs text-fg-3">Desmarque se comprou vasilhames novos — aí os vazios não saem do estoque.</span>
+            </span>
+          </label>
           <Field label="Nº da nota fiscal do fornecedor" className="max-w-xs">
             <Input value={invoice} onChange={(e) => setInvoice(e.target.value)} />
           </Field>
@@ -506,7 +514,7 @@ function OrderPdf({ order, onBack, onClose }: { order: PurchaseOrder; onBack: ()
                 <tr key={it.productId}>
                   <td className="border border-neutral-300 px-2 py-1.5">{p.code}</td>
                   <td className="border border-neutral-300 px-2 py-1.5">{p.name}</td>
-                  <td className="border border-neutral-300 px-2 py-1.5 text-right">{num(it.quantity)} {p.unit}</td>
+                  <td className="border border-neutral-300 px-2 py-1.5 text-right">{num(it.quantity)} {p.returnable ? "cheios" : "un"}</td>
                   <td className="border border-neutral-300 px-2 py-1.5 text-right">{brl(it.unitPrice)}</td>
                   <td className="border border-neutral-300 px-2 py-1.5 text-right">{brl(it.quantity * it.unitPrice)}</td>
                 </tr>

@@ -54,10 +54,10 @@ export function Fiscal() {
         <Card>
           <CardHeader title="Fluxo de emissão (sistema real)" />
           <ol className="list-decimal space-y-1.5 py-4 pr-4 pl-9 text-sm text-fg-2">
-            <li>Venda finalizada no PDV.</li>
+            <li>Venda finalizada no balcão ou entrega.</li>
             <li>Identifica o documento aplicável (NFC-e ao consumidor; NF-e para destinatário PJ/contribuinte).</li>
-            <li>Valida dados do emitente, do cliente e dos produtos (NCM, CFOP, CST/CSOSN).</li>
-            <li>Calcula tributos pelas regras configuradas.</li>
+            <li>Valida dados do emitente, do cliente e dos produtos (NCM, código ANP do GLP, CFOP, CST).</li>
+            <li>Calcula tributos pelas regras configuradas (GLP tem ICMS monofásico — validar com o contador).</li>
             <li>Envia ao provedor pelo servidor (credenciais nunca vão ao navegador).</li>
             <li>Consulta o retorno: autorizada, rejeitada, denegada ou contingência.</li>
             <li>Registra chave de acesso, protocolo, XML autorizado e DANFE em PDF.</li>
@@ -76,17 +76,17 @@ export function Fiscal() {
 export function Relatorios() {
   const { products, sales, customers } = useStore();
   const completed = sales.filter((s) => s.status === "completed");
-  const stockValue = products.reduce((a, p) => a + Math.max(p.stock, 0) * p.cost, 0);
+  const stockValue = products.reduce((a, p) => a + Math.max(p.stockFull, 0) * p.costExchange + Math.max(p.stockFull + p.stockEmpty, 0) * p.costShell, 0);
   const reports = [
     {
       title: "Posição de estoque",
-      desc: `${products.length} produtos · valor em custo ${brl(stockValue)}`,
+      desc: `${products.length} produtos · valor em custo (conteúdo + vasilhames) ${brl(stockValue)}`,
       run: () =>
         downloadCsv(
           "relatorio-estoque.csv",
-          ["codigo", "produto", "categoria", "estoque", "minimo", "custo", "valor_em_estoque", "situacao"],
-          products.map((p) => [p.code, p.name, p.category, p.stock, p.minStock, p.cost, Math.round(Math.max(p.stock, 0) * p.cost * 100) / 100,
-            p.stock <= 0 ? "Sem estoque" : p.stock <= p.minStock ? "Abaixo do mínimo" : "OK"]),
+          ["codigo", "produto", "cheios", "vazios", "minimo", "custo_recarga", "custo_vasilhame", "situacao"],
+          products.map((p) => [p.code, p.name, p.stockFull, p.returnable ? p.stockEmpty : "", p.minStock, p.costExchange, p.costShell,
+            p.stockFull <= 0 ? "Sem estoque" : p.stockFull <= p.minStock ? "Abaixo do mínimo" : "OK"]),
         ),
     },
     {
@@ -107,6 +107,24 @@ export function Relatorios() {
       },
     },
     {
+      title: "Entregas por entregador",
+      desc: "Quantidade de entregas, valor e tempo médio por entregador",
+      run: () => {
+        const m = new Map<string, { n: number; v: number; min: number }>();
+        for (const s of completed)
+          if (s.delivery?.status === "entregue" && s.delivery.deliveredAt) {
+            const k = s.delivery.driver ?? "—";
+            const cur = m.get(k) ?? { n: 0, v: 0, min: 0 };
+            cur.n++;
+            cur.v += s.total;
+            cur.min += (new Date(s.delivery.deliveredAt).getTime() - new Date(s.at).getTime()) / 60000;
+            m.set(k, cur);
+          }
+        downloadCsv("relatorio-entregadores.csv", ["entregador", "entregas", "valor", "tempo_medio_min"],
+          [...m.entries()].map(([k, v]) => [k, v.n, Math.round(v.v * 100) / 100, Math.round(v.min / v.n)]));
+      },
+    },
+    {
       title: "Histórico de compras por cliente",
       desc: `${customers.length} clientes`,
       run: () =>
@@ -121,7 +139,7 @@ export function Relatorios() {
   return (
     <>
       <PageHeader title="Relatórios" description="Exportação em CSV (abre no Excel). PDF e XLSX gerados no servidor na versão final." />
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
         {reports.map((r) => (
           <Card key={r.title} className="flex flex-col p-4">
             <FileSpreadsheet className="size-6 text-accent" />
@@ -142,7 +160,7 @@ export function Relatorios() {
 }
 
 export function Usuarios() {
-  const { users, audit, allowNegativeStock, setAllowNegativeStock } = useStore();
+  const { users, audit, drivers, allowNegativeStock, setAllowNegativeStock } = useStore();
   return (
     <>
       <PageHeader title="Usuários e empresa" description="Perfis de acesso, parâmetros da empresa e auditoria." />
@@ -193,6 +211,18 @@ export function Usuarios() {
           </div>
         </Card>
       </div>
+
+      <Card className="mt-4">
+        <CardHeader title="Entregadores" subtitle="Aparecem na tela de venda e no painel de entregas" />
+        <ul className="divide-y divide-line">
+          {drivers.map((d) => (
+            <li key={d} className="flex items-center justify-between px-4 py-2 text-sm">
+              {d}
+              <Badge tone="good">Ativo</Badge>
+            </li>
+          ))}
+        </ul>
+      </Card>
 
       <Card className="mt-4">
         <CardHeader title="Matriz de permissões" subtitle="A mesma usada pelo banco de dados (RLS) no sistema real" />

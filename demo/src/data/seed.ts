@@ -1,11 +1,8 @@
 /**
- * Dados FICTÍCIOS para a demonstração. Gerados de forma determinística (mesma
- * semente → mesmos dados) a partir da data atual, para que o painel tenha
- * histórico recente. Nenhuma pessoa ou empresa real é representada.
+ * Dados FICTÍCIOS de uma revenda de gás e água, gerados de forma
+ * determinística a partir da data atual. Nenhuma pessoa, empresa ou marca
+ * real é representada.
  */
-import { computeSaleTotals } from "@erp/domain/sale";
-import { fromCents } from "@erp/domain/money";
-
 import type {
   AuditEntry,
   CashSession,
@@ -15,21 +12,27 @@ import type {
   Product,
   PurchaseOrder,
   Sale,
+  SaleItem,
+  SaleMode,
   Supplier,
   Transaction,
   User,
 } from "./types";
+import type { PaymentMethod } from "@erp/domain/sale";
 
 export const COMPANY = {
-  legalName: "Comercial Exemplo Ltda",
-  tradeName: "Loja Exemplo (demonstração)",
+  legalName: "Gás Exemplo Comércio de GLP Ltda",
+  tradeName: "Gás Exemplo (demonstração)",
   document: "11.222.333/0001-81",
   stateRegistration: "123.456.789.110",
-  address: "Rua das Amostras, 100 — Centro — São Paulo/SP — 01001-000",
+  address: "Av. das Amostras, 500 — Vila Nova — São Paulo/SP — 01001-000",
   phone: "(11) 3000-0000",
-  email: "contato@exemplo.com.br",
+  email: "pedidos@gasexemplo.com.br",
   maxSellerDiscount: 5,
+  deliveryFee: 0,
 };
+
+export const DRIVERS = ["Marcos (moto 1)", "Tiago (moto 2)", "Sérgio (caminhonete)"];
 
 function rng(seed: number) {
   let s = seed >>> 0;
@@ -38,10 +41,8 @@ function rng(seed: number) {
     return s / 4294967296;
   };
 }
-
-const rand = rng(20261014);
+const rand = rng(20261015);
 const pick = <T,>(arr: readonly T[]) => arr[Math.floor(rand() * arr.length)];
-const uid = (p: string, n: number) => `${p}-${n.toString().padStart(4, "0")}`;
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
 export const today = new Date();
@@ -54,51 +55,40 @@ export function daysAgo(n: number, hour = 12, minute = 0) {
 }
 const isoDate = (n: number) => daysAgo(n).slice(0, 10);
 
-/** Gera CPF/CNPJ fictício com dígitos verificadores válidos (para testes). */
-function withCheckDigits(base: string, weights: (d: number) => number[], cpf: boolean) {
-  let doc = base;
-  for (let d = 1; d <= 2; d++) {
-    const w = weights(d);
-    const sum = [...doc].reduce((acc, ch, i) => acc + (ch.charCodeAt(0) - 48) * w[i], 0);
-    const dv = cpf ? ((sum * 10) % 11) % 10 : sum % 11 < 2 ? 0 : 11 - (sum % 11);
-    doc += String(dv);
-  }
-  return doc;
-}
-const fakeCpf = (base9: string) => {
-  const v = withCheckDigits(base9, (d) => Array.from({ length: 8 + d }, (_, i) => 9 + d - i), true);
-  return v.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, "$1.$2.$3-$4");
-};
-const fakeCnpj = (base12: string) => {
+/** Gera CNPJ fictício com dígitos verificadores válidos (para testes). */
+function fakeCnpj(base12: string) {
   const all = [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
-  const v = withCheckDigits(base12, (d) => all.slice(d === 1 ? 1 : 0), false);
-  return v.replace(/^(.{2})(.{3})(.{3})(.{4})(.{2})$/, "$1.$2.$3/$4-$5");
-};
+  let doc = base12;
+  for (let d = 1; d <= 2; d++) {
+    const w = all.slice(d === 1 ? 1 : 0);
+    const sum = [...doc].reduce((acc, ch, i) => acc + (ch.charCodeAt(0) - 48) * w[i], 0);
+    doc += String(sum % 11 < 2 ? 0 : 11 - (sum % 11));
+  }
+  return doc.replace(/^(.{2})(.{3})(.{3})(.{4})(.{2})$/, "$1.$2.$3/$4-$5");
+}
 
 export const users: User[] = [
-  { id: "u1", name: "Ana Administradora", email: "ana@exemplo.com.br", role: "admin", active: true },
-  { id: "u2", name: "Bruno Gerente", email: "bruno@exemplo.com.br", role: "manager", active: true },
-  { id: "u3", name: "Carla Vendedora", email: "carla@exemplo.com.br", role: "seller", active: true },
-  { id: "u4", name: "Diego Vendedor", email: "diego@exemplo.com.br", role: "seller", active: true },
-  { id: "u5", name: "Eva Estoquista", email: "eva@exemplo.com.br", role: "stockist", active: true },
+  { id: "u1", name: "Ana Administradora", email: "ana@gasexemplo.com.br", role: "admin", active: true },
+  { id: "u2", name: "Bruno Gerente", email: "bruno@gasexemplo.com.br", role: "manager", active: true },
+  { id: "u3", name: "Carla Atendente", email: "carla@gasexemplo.com.br", role: "seller", active: true },
+  { id: "u5", name: "Eva Estoquista", email: "eva@gasexemplo.com.br", role: "stockist", active: true },
 ];
 
 export const suppliers: Supplier[] = [
-  ["11.444.777/0001-61", "Distribuidora Alfa Ltda", "Alfa Distribuição", "Marcos", "São Paulo", "SP", 5, "28 dias"],
-  ["12.ABC.345/01DE-35", "Beta Têxtil S.A.", "Beta Têxtil", "Juliana", "Blumenau", "SC", 10, "30/60 dias"],
-  [fakeCnpj("907010010001"), "Gama Papelaria Atacado Ltda", "Gama Atacado", "Roberto", "Campinas", "SP", 3, "À vista com 3% desc."],
-  [fakeCnpj("907010020001"), "Delta Utilidades do Lar Ltda", "Delta Lar", "Patrícia", "Belo Horizonte", "MG", 7, "21 dias"],
-  [fakeCnpj("907010030001"), "Ômega Eletrônicos Ltda", "Ômega", "Felipe", "Curitiba", "PR", 12, "30 dias"],
+  [fakeCnpj("907020010001"), "Distribuidora de GLP Alfa Ltda", "GLP Alfa", "Roberto", "Barueri", "SP", 1, "Boleto 14 dias"],
+  [fakeCnpj("907020020001"), "Beta Gás Distribuidora S.A.", "Beta Gás", "Juliana", "Paulínia", "SP", 2, "Boleto 21 dias"],
+  [fakeCnpj("907020030001"), "Águas Serra Azul Ltda", "Serra Azul", "Felipe", "Atibaia", "SP", 2, "À vista"],
+  [fakeCnpj("907020040001"), "Comercial de Acessórios Gama Ltda", "Gama Acessórios", "Patrícia", "São Paulo", "SP", 5, "28 dias"],
 ].map(([document, legalName, tradeName, representative, city, state, leadDays, paymentTerms], i) => ({
-  id: uid("sup", i + 1),
+  id: `sup-${i + 1}`,
   document: document as string,
   legalName: legalName as string,
   tradeName: tradeName as string,
   stateRegistration: "",
   representative: representative as string,
-  phone: `(11) 4000-${(1000 + i * 37).toString()}`,
-  whatsapp: `(11) 9${(8000 + i * 113).toString()}-${(1000 + i * 71).toString()}`,
-  email: `vendas@${(tradeName as string).toLowerCase().split(" ")[0].normalize("NFD").replace(/[̀-ͯ]/g, "")}.com.br`,
+  phone: `(11) 4000-${1000 + i * 37}`,
+  whatsapp: `(11) 98${100 + i * 7}-${2000 + i * 71}`,
+  email: `pedidos@${(tradeName as string).toLowerCase().replace(/[^a-z]/g, "")}.com.br`,
   city: city as string,
   state: state as string,
   leadDays: leadDays as number,
@@ -106,180 +96,204 @@ export const suppliers: Supplier[] = [
   notes: "",
 }));
 
-const productDefs: [string, string, string, number, number, number, string, number][] = [
-  // nome, categoria, marca, custo, preço, mínimo, NCM, fornecedor
-  ["Camiseta básica algodão P", "Vestuário", "Beta", 18.5, 39.9, 10, "61091000", 1],
-  ["Camiseta básica algodão M", "Vestuário", "Beta", 18.5, 39.9, 10, "61091000", 1],
-  ["Camiseta básica algodão G", "Vestuário", "Beta", 18.5, 39.9, 10, "61091000", 1],
-  ["Meia esportiva (par)", "Vestuário", "Beta", 4.2, 12.9, 20, "61159600", 1],
-  ["Boné aba curva", "Acessórios", "Beta", 15, 44.9, 5, "65050090", 1],
-  ["Caderno universitário 10 matérias", "Papelaria", "Gama", 14.8, 29.9, 15, "48202000", 2],
-  ["Caneta esferográfica azul (cx 50)", "Papelaria", "Gama", 32, 64.9, 4, "96081000", 2],
-  ["Lápis grafite HB (cx 12)", "Papelaria", "Gama", 6.9, 14.9, 8, "96091000", 2],
-  ["Mochila escolar reforçada", "Papelaria", "Gama", 62, 139.9, 3, "42029200", 2],
-  ["Garrafa térmica 1L", "Utilidades", "Delta", 38, 79.9, 6, "96170010", 3],
-  ["Jogo de copos de vidro (6 un)", "Utilidades", "Delta", 22, 49.9, 5, "70133700", 3],
-  ["Pote hermético 1,2L", "Utilidades", "Delta", 9.5, 21.9, 12, "39241000", 3],
-  ["Pano de prato (kit 3)", "Utilidades", "Delta", 8, 19.9, 10, "63026000", 3],
-  ["Fone de ouvido Bluetooth", "Eletrônicos", "Ômega", 54, 119.9, 4, "85183000", 4],
-  ["Carregador USB-C 20W", "Eletrônicos", "Ômega", 28, 69.9, 6, "85044010", 4],
-  ["Cabo USB-C 1m", "Eletrônicos", "Ômega", 7.5, 24.9, 15, "85444200", 4],
-  ["Pilha alcalina AA (4 un)", "Eletrônicos", "Ômega", 9.8, 19.9, 12, "85061019", 4],
-  ["Lâmpada LED 9W", "Utilidades", "Delta", 5.4, 13.9, 20, "85395000", 3],
-  ["Café torrado e moído 500g", "Mercearia", "Alfa", 14.2, 24.9, 20, "09012100", 0],
-  ["Açúcar refinado 1kg", "Mercearia", "Alfa", 3.9, 6.49, 30, "17019900", 0],
-  ["Biscoito recheado 140g", "Mercearia", "Alfa", 1.9, 4.29, 40, "19053100", 0],
-  ["Água mineral 500ml", "Mercearia", "Alfa", 0.85, 2.5, 48, "22011000", 0],
-  ["Detergente líquido 500ml", "Limpeza", "Alfa", 1.6, 3.49, 24, "34022000", 0],
-  ["Sabão em pó 1kg", "Limpeza", "Alfa", 8.9, 17.9, 10, "34022000", 0],
+const GLP_NCM = "27111910";
+const GLP_ANP = "210203001";
+
+type Def = [Product["kind"], string, string, boolean, number, number, number, number, number, number, number, number, string, string];
+// tipo, nome, capacidade, retornável, troca, completo, custo, custo vasilhame, cheios, vazios, mínimo, fornecedor(idx), NCM, ANP
+const defs: Def[] = [
+  ["gas", "Gás P13 (botijão de cozinha)", "13 kg", true, 115, 335, 88, 210, 46, 58, 30, 0, GLP_NCM, GLP_ANP],
+  ["gas", "Gás P45 (cilindro)", "45 kg", true, 435, 1090, 345, 640, 7, 11, 6, 0, GLP_NCM, GLP_ANP],
+  ["gas", "Gás P20 (empilhadeira)", "20 kg", true, 215, 590, 168, 360, 4, 6, 3, 1, GLP_NCM, GLP_ANP],
+  ["gas", "Gás P5 (camping)", "5 kg", true, 58, 189, 41, 125, 9, 4, 4, 1, GLP_NCM, GLP_ANP],
+  ["gas", "Gás P2 (fogareiro)", "2 kg", true, 38, 125, 26, 82, 3, 5, 4, 1, GLP_NCM, GLP_ANP],
+  ["agua", "Água mineral galão", "20 L", true, 14, 42, 7.5, 24, 34, 41, 20, 2, "22011000", ""],
+  ["acessorio", "Regulador de gás (registro)", "un", false, 45, 0, 24, 0, 12, 0, 5, 3, "84818099", ""],
+  ["acessorio", "Mangueira de gás 1,2 m", "un", false, 22, 0, 9.5, 0, 18, 0, 8, 3, "40093100", ""],
+  ["acessorio", "Kit regulador + mangueira", "kit", false, 59, 0, 31, 0, 6, 0, 4, 3, "84818099", ""],
+  ["acessorio", "Abraçadeira", "un", false, 4, 0, 1.2, 0, 40, 0, 15, 3, "73269090", ""],
 ];
 
-const initialStock = [14, 3, 22, 61, 9, 26, 2, 0, 5, 11, 7, 30, 18, 6, 0, 40, 25, 52, 33, 70, 96, 140, 44, 4];
-
-export const products: Product[] = productDefs.map(([name, category, brand, cost, price, minStock, ncm, sup], i) => ({
-  id: uid("prd", i + 1),
+export const products: Product[] = defs.map(([kind, name, capacity, returnable, ex, full, cost, shell, cheios, vazios, min, , ncm, anp], i) => ({
+  id: `prd-${i + 1}`,
   code: i + 1,
-  barcode: `789${(1000000000 + i * 7919).toString().slice(0, 10)}`,
+  kind,
   name,
-  description: "",
-  category,
-  brand,
-  supplierId: suppliers[sup].id,
-  cost,
-  price,
-  stock: initialStock[i],
-  minStock,
-  unit: "UN",
-  location: `${String.fromCharCode(65 + (i % 5))}-${Math.floor(i / 5) + 1}`,
+  capacity,
+  returnable,
+  priceExchange: ex,
+  priceFull: full,
+  costExchange: cost,
+  costShell: shell,
+  stockFull: cheios,
+  stockEmpty: vazios,
+  minStock: min,
   active: true,
+  barcode: "",
   ncm,
-  cest: "",
-  origin: 0,
-  cfop: "5102",
+  anpCode: anp,
 }));
+export const productSupplier: Record<string, string> = Object.fromEntries(defs.map((d, i) => [`prd-${i + 1}`, `sup-${d[11] + 1}`]));
 
-const firstNames = ["Mariana", "João", "Fernanda", "Rafael", "Beatriz", "Lucas", "Camila", "Pedro", "Larissa", "Gustavo"];
-const lastNames = ["Souza", "Oliveira", "Santos", "Pereira", "Lima", "Costa", "Almeida", "Ribeiro"];
-// CPFs gerados apenas para teste (dígitos verificadores válidos).
-const testCpfs = firstNames.map((_, i) => fakeCpf(`90801${(1000 + i * 37).toString()}`));
+const first = ["Maria", "José", "Ana", "João", "Francisca", "Antônio", "Juliana", "Carlos", "Patrícia", "Paulo", "Aline", "Lucas",
+  "Sandra", "Marcelo", "Fernanda", "Rafael", "Cláudia", "Eduardo", "Renata", "Fábio", "Luciana", "Ricardo", "Vanessa", "Rodrigo",
+  "Simone", "André", "Débora", "Gustavo", "Tatiane", "Leandro", "Camila", "Diego"];
+const last = ["Silva", "Santos", "Oliveira", "Souza", "Lima", "Pereira", "Ferreira", "Costa", "Rodrigues", "Almeida", "Nascimento", "Gomes"];
+const streets = ["Rua das Acácias", "Rua dos Ipês", "Rua Projetada 3", "Av. Central", "Rua São Benedito", "Rua da Paz", "Travessa do Sol", "Rua das Palmeiras", "Rua Sete", "Rua Bela Vista"];
+const districts = ["Vila Nova", "Jardim das Flores", "Centro", "Parque Industrial", "Jardim Primavera", "Vila Esperança"];
+const references = ["Portão azul", "Ao lado da padaria", "Casa dos fundos", "Em frente à escola", "Sobrado amarelo", "Apto 12, interfone", ""];
 
-export const customers: Customer[] = [
-  ...firstNames.map((f, i) => ({
-    id: uid("cli", i + 1),
-    personType: "PF" as const,
-    document: testCpfs[i],
-    name: `${f} ${pick(lastNames)} (fictício)`,
-    tradeName: "",
-    phone: "",
-    whatsapp: `(11) 9${(7000 + i * 131).toString()}-${(2000 + i * 97).toString()}`,
-    email: `${f.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "")}@exemplo.com`,
-    zip: "01001000",
-    street: "Rua de Teste",
-    number: String(10 + i * 7),
-    district: "Centro",
-    city: "São Paulo",
-    state: "SP",
-    notes: "",
-    createdAt: daysAgo(120 - i * 9),
-  })),
-  {
-    id: uid("cli", 11),
-    personType: "PJ",
-    document: fakeCnpj("907010040001"),
-    name: "Escritório Modelo Ltda (fictício)",
-    tradeName: "Escritório Modelo",
-    phone: "(11) 3555-0101",
-    whatsapp: "",
-    email: "compras@escritoriomodelo.com.br",
-    zip: "04538133",
-    street: "Av. Exemplo",
-    number: "1500",
-    district: "Itaim",
-    city: "São Paulo",
-    state: "SP",
-    notes: "Compra material de escritório mensalmente.",
-    createdAt: daysAgo(80),
-  },
-];
+interface Profile { customer: Customer; productIdx: number; interval: number; channel: "entrega" | "balcao"; method: PaymentMethod }
 
-const sellers = ["Carla Vendedora", "Diego Vendedor", "Bruno Gerente"];
-const methods = ["cash", "pix", "pix", "debit_card", "credit_card", "credit_card"] as const;
+const profiles: Profile[] = first.map((f, i) => {
+  const isBusiness = i % 11 === 5;
+  const name = isBusiness ? `${pick(["Restaurante", "Lanchonete", "Pastelaria"])} ${f} (fictício)` : `${f} ${pick(last)} (fictício)`;
+  return {
+    customer: {
+      id: `cli-${i + 1}`,
+      name,
+      phone: `(11) 9${(7000 + i * 113).toString().slice(0, 4)}-${(1000 + i * 271).toString().slice(0, 4)}`,
+      document: "",
+      street: pick(streets),
+      number: String(10 + Math.floor(rand() * 900)),
+      district: pick(districts),
+      reference: pick(references),
+      notes: isBusiness ? "Cliente comercial — entrega pela manhã." : "",
+      createdAt: daysAgo(200 - i * 5),
+    },
+    productIdx: isBusiness ? 1 : i % 9 === 3 ? 5 : 0,
+    interval: isBusiness ? 6 + Math.floor(rand() * 3) : i % 9 === 3 ? 10 + Math.floor(rand() * 6) : 28 + Math.floor(rand() * 22),
+    channel: rand() < 0.8 ? "entrega" : "balcao",
+    method: pick(["cash", "cash", "pix", "pix", "pix", "debit_card", "credit_card"] as const),
+  };
+});
+export const customers: Customer[] = profiles.map((p) => p.customer);
 
 export const sales: Sale[] = [];
-const salesMovements: Movement[] = [];
 let saleNumber = 0;
-for (let d = 89; d >= 0; d--) {
-  const weekday = new Date(daysAgo(d)).getDay();
-  const base = weekday === 0 ? 2 : weekday === 6 ? 9 : 6;
-  const count = Math.max(1, Math.round(base + rand() * 5 - (d > 60 ? 2 : 0)));
-  for (let k = 0; k < count; k++) {
-    const nItems = 1 + Math.floor(rand() * 3);
-    const chosen = new Set<number>();
-    while (chosen.size < nItems) chosen.add(Math.floor(rand() * products.length));
-    const lines = [...chosen].map((idx) => ({ p: products[idx], q: 1 + Math.floor(rand() * (products[idx].price < 10 ? 6 : 2)) }));
-    const discount = rand() < 0.15 ? round2(lines.reduce((s, l) => s + l.p.price * l.q, 0) * 0.03) : 0;
-    const totals = computeSaleTotals(lines.map((l) => ({ quantity: l.q, unitPrice: l.p.price })), discount);
-    const total = fromCents(totals.totalCents);
-    const method = pick(methods);
-    saleNumber++;
-    const hour = 9 + Math.floor(rand() * 9);
-    const at = daysAgo(d, hour, Math.floor(rand() * 60));
-    const tendered = method === "cash" ? Math.ceil(total / 10) * 10 : undefined;
-    sales.push({
-      id: uid("ven", saleNumber),
-      number: saleNumber,
-      customerId: rand() < 0.45 ? pick(customers).id : null,
-      seller: pick(sellers),
+
+function makeSale(at: string, items: { idx: number; mode: SaleMode; qty: number }[], opts: { customer?: Profile; channel: "balcao" | "entrega"; method: PaymentMethod; seller?: string; deliveredMinutes?: number | null; driver?: string }) {
+  const saleItems: SaleItem[] = items.map(({ idx, mode, qty }) => {
+    const p = products[idx];
+    const unitPrice = mode === "completo" ? p.priceFull : p.priceExchange;
+    const unitCost = mode === "completo" ? p.costExchange + p.costShell : p.costExchange;
+    return { productId: p.id, name: p.name, mode, quantity: qty, unitPrice, total: round2(unitPrice * qty), unitCost };
+  });
+  const subtotal = round2(saleItems.reduce((a, i) => a + i.total, 0));
+  saleNumber++;
+  const c = opts.customer?.customer;
+  const delivered = opts.deliveredMinutes;
+  const sale: Sale = {
+    id: `ven-${saleNumber}`,
+    number: saleNumber,
+    customerId: c?.id ?? null,
+    seller: opts.seller ?? pick(["Carla Atendente", "Bruno Gerente"]),
+    at,
+    channel: opts.channel,
+    items: saleItems,
+    deliveryFee: 0,
+    subtotal,
+    discount: 0,
+    total: subtotal,
+    method: opts.method,
+    paid: opts.channel === "balcao" || delivered !== null,
+    status: "completed",
+  };
+  if (opts.channel === "entrega" && c) {
+    const dispatched = new Date(new Date(at).getTime() + 8 * 60000).toISOString();
+    sale.delivery = {
+      status: delivered === null ? (opts.driver ? "em_rota" : "pendente") : "entregue",
+      address: `${c.street}, ${c.number} — ${c.district}`,
+      reference: c.reference,
+      driver: opts.driver ?? (delivered === null ? null : pick(DRIVERS)),
+      changeFor: opts.method === "cash" ? Math.ceil((subtotal + 1) / 50) * 50 : undefined,
+      dispatchedAt: delivered === null && !opts.driver ? undefined : dispatched,
+      deliveredAt: delivered === null || delivered === undefined ? undefined : new Date(new Date(at).getTime() + delivered * 60000).toISOString(),
+    };
+    if (sale.delivery.status === "entregue" && !sale.delivery.driver) sale.delivery.driver = pick(DRIVERS);
+  }
+  sales.push(sale);
+  return sale;
+}
+
+// Compras recorrentes dos clientes nos últimos 120 dias
+const events: { at: string; run: () => void }[] = [];
+for (const p of profiles) {
+  let d = 120 - Math.floor(rand() * p.interval);
+  while (d > 0) {
+    const day = d;
+    const hour = 8 + Math.floor(rand() * 10);
+    const at = daysAgo(day, hour, Math.floor(rand() * 60));
+    events.push({
       at,
-      items: lines.map((l, i) => ({
-        productId: l.p.id,
-        name: l.p.name,
-        unit: l.p.unit,
-        quantity: l.q,
-        unitPrice: l.p.price,
-        discount: fromCents(totals.lines[i].discountCents),
-        total: fromCents(totals.lines[i].totalCents),
-        unitCost: l.p.cost,
-      })),
-      subtotal: fromCents(totals.subtotalCents),
-      discount: fromCents(totals.discountTotalCents),
-      total,
-      change: tendered ? round2(tendered - total) : 0,
-      payments: [{ method, amount: total, tendered }],
-      status: d > 3 && rand() < 0.015 ? "cancelled" : "completed",
-      cancelReason: undefined,
+      run: () =>
+        makeSale(at, [{ idx: p.productIdx, mode: "troca", qty: p.productIdx === 1 ? 2 : p.productIdx === 5 ? 2 : 1 }], {
+          customer: p, channel: p.channel, method: p.method, deliveredMinutes: 20 + Math.floor(rand() * 40),
+        }),
     });
+    d -= p.interval + Math.floor(rand() * 7) - 3;
   }
 }
-for (const s of sales) if (s.status === "cancelled") s.cancelReason = "Cliente desistiu da compra";
+// Vendas de balcão avulsas (consumidor não identificado)
+for (let d = 89; d >= 1; d--) {
+  const n = 1 + Math.floor(rand() * 4);
+  for (let k = 0; k < n; k++) {
+    const at = daysAgo(d, 8 + Math.floor(rand() * 10), Math.floor(rand() * 60));
+    const r = rand();
+    const items =
+      r < 0.5 ? [{ idx: 0, mode: (rand() < 0.12 ? "completo" : "troca") as SaleMode, qty: 1 }]
+        : r < 0.7 ? [{ idx: 5, mode: "troca" as SaleMode, qty: 1 + Math.floor(rand() * 2) }]
+        : r < 0.8 ? [{ idx: 3 + Math.floor(rand() * 2), mode: "troca" as SaleMode, qty: 1 }]
+        : [{ idx: 6 + Math.floor(rand() * 4), mode: "unidade" as SaleMode, qty: 1 }];
+    events.push({ at, run: () => makeSale(at, items, { channel: "balcao", method: pick(["cash", "pix", "pix", "debit_card", "credit_card"] as const) }) });
+  }
+}
+events.sort((a, b) => a.at.localeCompare(b.at)).forEach((e) => e.run());
 
-// Movimentações das vendas recentes (últimos 7 dias) para o histórico.
-for (const s of sales.filter((x) => new Date(x.at) >= new Date(daysAgo(7)))) {
+// Hoje: vendas concluídas, entregas em rota e pendentes
+const now = new Date();
+const hNow = Math.max(9, Math.min(now.getHours(), 18));
+const todayAt = (h: number, m: number) => {
+  const d = new Date(today);
+  d.setHours(Math.min(h, hNow), m, 0, 0);
+  const limit = Date.now() - 60 * 60000;
+  return (d.getTime() > limit ? new Date(limit) : d).toISOString();
+};
+makeSale(todayAt(8, 12), [{ idx: 0, mode: "troca", qty: 1 }], { customer: profiles[2], channel: "entrega", method: "pix", deliveredMinutes: 31 });
+makeSale(todayAt(8, 40), [{ idx: 0, mode: "troca", qty: 1 }, { idx: 7, mode: "unidade", qty: 1 }], { channel: "balcao", method: "cash" });
+makeSale(todayAt(9, 5), [{ idx: 1, mode: "troca", qty: 2 }], { customer: profiles[5], channel: "entrega", method: "pix", deliveredMinutes: 44 });
+makeSale(todayAt(9, 30), [{ idx: 5, mode: "troca", qty: 2 }], { customer: profiles[12], channel: "entrega", method: "cash", deliveredMinutes: 25 });
+makeSale(todayAt(10, 2), [{ idx: 0, mode: "completo", qty: 1 }, { idx: 8, mode: "unidade", qty: 1 }], { channel: "balcao", method: "credit_card" });
+const minutesAgo = (m: number) => new Date(Date.now() - m * 60000).toISOString();
+makeSale(minutesAgo(38), [{ idx: 0, mode: "troca", qty: 1 }], { customer: profiles[18], channel: "entrega", method: "cash", deliveredMinutes: null, driver: DRIVERS[0] });
+makeSale(minutesAgo(14), [{ idx: 0, mode: "troca", qty: 1 }], { customer: profiles[21], channel: "entrega", method: "pix", deliveredMinutes: null });
+makeSale(minutesAgo(6), [{ idx: 5, mode: "troca", qty: 3 }], { customer: profiles[26], channel: "entrega", method: "cash", deliveredMinutes: null });
+
+// Algumas vendas antigas canceladas
+for (const s of sales) if (s.number % 97 === 13 && s.at < daysAgo(5)) {
+  s.status = "cancelled";
+  s.cancelReason = "Cliente desistiu do pedido";
+}
+
+export const movements: Movement[] = [];
+let mv = 0;
+for (const s of sales.filter((x) => x.at >= daysAgo(7) && x.status === "completed")) {
   for (const it of s.items) {
-    salesMovements.push({
-      id: `mov-s-${s.number}-${it.productId}`,
-      productId: it.productId,
-      type: "sale" as const,
-      quantity: -it.quantity,
-      before: 0,
-      after: 0,
-      reason: `Venda nº ${s.number}`,
-      reference: `Venda ${s.number}`,
-      user: s.seller,
-      at: s.at,
-    });
+    movements.push({ id: `mov-${++mv}`, productId: it.productId, bucket: "cheio", type: "sale", quantity: -it.quantity, reason: `Venda nº ${s.number}`, reference: `Venda ${s.number}`, user: s.seller, at: s.at });
+    if (it.mode === "troca" && (s.channel === "balcao" || s.delivery?.status === "entregue")) {
+      movements.push({ id: `mov-${++mv}`, productId: it.productId, bucket: "vazio", type: "shell_in", quantity: it.quantity, reason: `Vasilhame recebido — venda nº ${s.number}`, reference: `Venda ${s.number}`, user: s.seller, at: s.delivery?.deliveredAt ?? s.at });
+    }
   }
 }
 
 export const purchaseOrders: PurchaseOrder[] = [
-  { n: 1, sup: 1, status: "received", issue: 40, exp: 30, items: [[0, 30, 18.5, 30], [1, 30, 18.5, 30], [2, 30, 18.5, 30], [3, 60, 4.2, 60]] },
-  { n: 2, sup: 0, status: "received", issue: 25, exp: 20, items: [[18, 60, 14.2, 60], [19, 100, 3.9, 100], [21, 240, 0.85, 240]] },
-  { n: 3, sup: 2, status: "partially_received", issue: 12, exp: 5, items: [[5, 40, 14.8, 20], [6, 10, 32, 10], [7, 24, 6.9, 0]] },
-  { n: 4, sup: 4, status: "confirmed", issue: 6, exp: -6, items: [[13, 10, 54, 0], [14, 15, 28, 0], [15, 30, 7.5, 0]] },
-  { n: 5, sup: 3, status: "sent", issue: 2, exp: -5, items: [[9, 12, 38, 0], [10, 10, 22, 0]] },
-  { n: 6, sup: 0, status: "draft", issue: 0, exp: -7, items: [[22, 48, 1.6, 0], [23, 20, 8.9, 0]] },
+  { n: 1, sup: 0, status: "received", issue: 9, exp: 8, items: [[0, 80, 88, 80], [1, 10, 345, 10]] },
+  { n: 2, sup: 2, status: "received", issue: 6, exp: 5, items: [[5, 60, 7.5, 60]] },
+  { n: 3, sup: 0, status: "partially_received", issue: 3, exp: 2, items: [[0, 80, 88, 50], [2, 6, 168, 6]] },
+  { n: 4, sup: 3, status: "confirmed", issue: 2, exp: -3, items: [[6, 12, 24, 0], [7, 20, 9.5, 0], [9, 50, 1.2, 0]] },
+  { n: 5, sup: 1, status: "draft", issue: 0, exp: -1, items: [[0, 60, 87, 0], [3, 10, 41, 0]] },
 ].map((o) => ({
-  id: uid("ped", o.n),
+  id: `ped-${o.n}`,
   number: o.n,
   supplierId: suppliers[o.sup].id,
   status: o.status as PurchaseOrder["status"],
@@ -287,65 +301,44 @@ export const purchaseOrders: PurchaseOrder[] = [
   expectedDate: isoDate(o.exp),
   paymentMethod: "Boleto",
   paymentTerms: suppliers[o.sup].paymentTerms,
-  dueDays: 28,
-  discount: o.n === 3 ? 15 : 0,
-  freight: o.n % 2 === 0 ? 35 : 0,
-  notes: o.n === 4 ? "Entregar no período da manhã." : "",
+  dueDays: 14,
+  discount: 0,
+  freight: 0,
+  notes: o.n === 3 ? "Restante do P13 na próxima carga." : "",
   items: o.items.map(([pi, q, price, rec]) => ({ productId: products[pi].id, quantity: q, unitPrice: price, received: rec })),
 }));
+for (const o of purchaseOrders.filter((x) => x.items.some((i) => i.received > 0))) {
+  for (const i of o.items.filter((x) => x.received > 0)) {
+    const at = daysAgo(o.number === 3 ? 2 : o.number === 2 ? 5 : 8, 7, 30);
+    movements.push({ id: `mov-${++mv}`, productId: i.productId, bucket: "cheio", type: "purchase_receipt", quantity: i.received, reason: `Carga do pedido nº ${o.number}`, reference: `Pedido ${o.number}`, user: "Eva Estoquista", at });
+    if (products.find((p) => p.id === i.productId)?.returnable) {
+      movements.push({ id: `mov-${++mv}`, productId: i.productId, bucket: "vazio", type: "shell_return", quantity: -i.received, reason: `Vazios devolvidos à distribuidora — pedido nº ${o.number}`, reference: `Pedido ${o.number}`, user: "Eva Estoquista", at });
+    }
+  }
+}
+movements.push({ id: `mov-${++mv}`, productId: products[0].id, bucket: "vazio", type: "manual_exit", quantity: -1, reason: "Botijão vazio condenado (amassado) — descarte", reference: "Manual", user: "Bruno Gerente", at: daysAgo(1, 16) });
+movements.sort((a, b) => b.at.localeCompare(a.at));
 
-export const movements: Movement[] = [
-  ...salesMovements,
-  ...purchaseOrders
-    .filter((o) => o.items.some((i) => i.received > 0))
-    .flatMap((o) =>
-      o.items
-        .filter((i) => i.received > 0)
-        .map((i) => ({
-          id: `mov-p-${o.number}-${i.productId}`,
-          productId: i.productId,
-          type: "purchase_receipt" as const,
-          quantity: i.received,
-          before: 0,
-          after: 0,
-          reason: `Recebimento do pedido nº ${o.number}`,
-          reference: `Pedido ${o.number}`,
-          user: "Eva Estoquista",
-          at: daysAgo(o.number === 3 ? 4 : o.number === 2 ? 21 : 31, 10),
-        })),
-    ),
-  {
-    id: "mov-a-1", productId: products[7].id, type: "adjustment" as const, quantity: -3, before: 3, after: 0,
-    reason: "Divergência no inventário mensal", reference: "Manual", user: "Bruno Gerente", at: daysAgo(3, 17),
-  },
-  {
-    id: "mov-a-2", productId: products[10].id, type: "manual_exit" as const, quantity: -1, before: 8, after: 7,
-    reason: "Avaria — copo quebrado", reference: "Manual", user: "Eva Estoquista", at: daysAgo(1, 15),
-  },
-].sort((a, b) => b.at.localeCompare(a.at));
-
-const receivedValue = (o: PurchaseOrder) => round2(o.items.reduce((s, i) => s + i.received * i.unitPrice, 0));
+const received = (o: PurchaseOrder) => round2(o.items.reduce((s, i) => s + i.received * i.unitPrice, 0));
+const receivedOrders = purchaseOrders.filter((o) => o.items.some((i) => i.received > 0));
 
 export const titles: FinancialTitle[] = [
-  ...purchaseOrders
-    .filter((o) => o.items.some((i) => i.received > 0))
-    .map((o, i) => ({
-      id: uid("tit-p", o.number),
-      kind: "payable" as const,
-      description: `Pedido de compra nº ${o.number} — recebimento`,
-      party: suppliers.find((s) => s.id === o.supplierId)!.tradeName,
-      amount: round2(receivedValue(o) + o.freight - o.discount),
-      paid: i === 0 ? round2(receivedValue(o) + o.freight - o.discount) : 0,
-      dueDate: isoDate(i === 0 ? 2 : i === 1 ? -7 : -24),
-      status: (i === 0 ? "paid" : "open") as FinancialTitle["status"],
-      source: `Pedido ${o.number}`,
-    })),
-  { id: "tit-x-1", kind: "payable", description: "Aluguel da loja", party: "Imobiliária Exemplo", amount: 3200, paid: 0, dueDate: isoDate(-3), status: "open", source: "Manual" },
-  { id: "tit-x-2", kind: "payable", description: "Energia elétrica", party: "Concessionária", amount: 486.32, paid: 0, dueDate: isoDate(2), status: "open", source: "Manual" },
-  { id: "tit-x-3", kind: "payable", description: "Internet e telefone", party: "Operadora", amount: 189.9, paid: 189.9, dueDate: isoDate(10), status: "paid", source: "Manual" },
+  ...receivedOrders.map((o, i) => ({
+    id: `tit-p-${o.number}`,
+    kind: "payable" as const,
+    description: `Pedido de compra nº ${o.number} — carga recebida`,
+    party: suppliers.find((s) => s.id === o.supplierId)!.tradeName,
+    amount: received(o),
+    paid: i === 1 ? received(o) : 0,
+    dueDate: isoDate(i === 0 ? -5 : i === 1 ? 5 : -12),
+    status: (i === 1 ? "paid" : "open") as FinancialTitle["status"],
+    source: `Pedido ${o.number}`,
+  })),
+  { id: "tit-x-1", kind: "payable", description: "Aluguel do depósito", party: "Imobiliária Exemplo", amount: 2800, paid: 0, dueDate: isoDate(-4), status: "open", source: "Manual" },
+  { id: "tit-x-2", kind: "payable", description: "Combustível das motos", party: "Posto Exemplo", amount: 640, paid: 0, dueDate: isoDate(1), status: "open", source: "Manual" },
   ...sales
-    .filter((s) => s.status === "completed" && s.payments[0].method === "credit_card" && new Date(s.at) > new Date(daysAgo(30)))
-    .slice(-12)
+    .filter((s) => s.status === "completed" && s.method === "credit_card" && s.at > daysAgo(30))
+    .slice(-10)
     .map((s) => ({
       id: `tit-r-${s.number}`,
       kind: "receivable" as const,
@@ -358,32 +351,28 @@ export const titles: FinancialTitle[] = [
       source: `Venda ${s.number}`,
     })),
   {
-    id: "tit-r-cred-1", kind: "receivable", description: "Venda nº 12 — crediário 2/3", party: customers[10].name,
-    amount: 216.6, paid: 0, dueDate: isoDate(-12), status: "open", source: "Venda 12",
-  },
-  {
-    id: "tit-r-cred-2", kind: "receivable", description: "Venda nº 12 — crediário 1/3", party: customers[10].name,
-    amount: 216.6, paid: 0, dueDate: isoDate(5), status: "open", source: "Venda 12",
+    id: "tit-r-fiado-1", kind: "receivable", description: "Venda nº 41 — fiado", party: customers[5].name,
+    amount: 870, paid: 0, dueDate: isoDate(3), status: "open", source: "Venda 41",
   },
 ];
 
 export const transactions: Transaction[] = [
   ...sales
-    .filter((s) => s.status === "completed" && s.payments[0].method !== "credit_card")
+    .filter((s) => s.status === "completed" && s.paid && !["credit_card", "store_credit"].includes(s.method))
     .map((s) => ({
       id: `trx-${s.number}`,
       direction: "in" as const,
       amount: s.total,
-      method: s.payments[0].method,
+      method: s.method,
       description: `Venda nº ${s.number}`,
-      at: s.at,
+      at: s.delivery?.deliveredAt ?? s.at,
     })),
   ...[
-    [28, 3200, "Aluguel da loja"],
-    [20, 452.1, "Energia elétrica"],
-    [15, 1450, "Pedido de compra nº 1"],
-    [10, 189.9, "Internet e telefone"],
-    [5, 830, "Comissões de vendas"],
+    [28, 2800, "Aluguel do depósito"],
+    [20, 610, "Combustível das motos"],
+    [14, 7040, "Pedido de compra nº anterior — GLP Alfa"],
+    [10, 450, "Manutenção da caminhonete"],
+    [5, 2100, "Salários entregadores (adiantamento)"],
   ].map(([d, amount, description], i) => ({
     id: `trx-o-${i}`,
     direction: "out" as const,
@@ -394,22 +383,23 @@ export const transactions: Transaction[] = [
   })),
 ].sort((a, b) => b.at.localeCompare(a.at));
 
-const todaysCash = sales.filter((s) => s.at.slice(0, 10) === today.toISOString().slice(0, 10) && s.payments[0].method === "cash" && s.status === "completed");
+const todayKey = today.toISOString().slice(0, 10);
 export const cash: CashSession = {
-  number: 87,
+  number: 212,
   status: "open",
-  openedAt: daysAgo(0, 8, 55),
-  operator: "Carla Vendedora",
+  openedAt: daysAgo(0, 7, 50),
+  operator: "Carla Atendente",
   movements: [
-    { id: "cx-0", type: "opening", amount: 150, description: "Abertura de caixa (fundo de troco)", at: daysAgo(0, 8, 55) },
-    ...todaysCash.map((s) => ({ id: `cx-${s.number}`, type: "sale" as const, amount: s.total, description: `Venda nº ${s.number}`, at: s.at })),
+    { id: "cx-0", type: "opening", amount: 200, description: "Abertura de caixa (fundo de troco)", at: daysAgo(0, 7, 50) },
+    ...sales
+      .filter((s) => s.method === "cash" && s.paid && (s.delivery?.deliveredAt ?? s.at).slice(0, 10) === todayKey)
+      .map((s) => ({ id: `cx-${s.number}`, type: "sale" as const, amount: s.total, description: `Venda nº ${s.number}`, at: s.delivery?.deliveredAt ?? s.at })),
   ],
 };
 
 export const audit: AuditEntry[] = [
-  { id: "a1", at: daysAgo(0, 8, 55), user: "Carla Vendedora", action: "cash.opened", detail: "Caixa nº 87 aberto com R$ 150,00" },
-  { id: "a2", at: daysAgo(1, 15), user: "Eva Estoquista", action: "stock.manual_exit", detail: "Jogo de copos: −1 (avaria)" },
-  { id: "a3", at: daysAgo(3, 17), user: "Bruno Gerente", action: "stock.adjustment", detail: "Lápis grafite: saldo 3 → 0" },
-  { id: "a4", at: daysAgo(4, 10), user: "Eva Estoquista", action: "purchase.received", detail: "Recebimento parcial do pedido nº 3" },
-  { id: "a5", at: daysAgo(6, 9), user: "Ana Administradora", action: "update", detail: "Preço de venda do Fone Bluetooth: 109,90 → 119,90" },
+  { id: "a1", at: daysAgo(0, 7, 50), user: "Carla Atendente", action: "cash.opened", detail: "Caixa nº 212 aberto com R$ 200,00" },
+  { id: "a2", at: daysAgo(1, 16), user: "Bruno Gerente", action: "stock.manual_exit", detail: "P13 vazio: −1 (vasilhame condenado)" },
+  { id: "a3", at: daysAgo(2, 7, 30), user: "Eva Estoquista", action: "purchase.received", detail: "Carga parcial do pedido nº 3 (50 P13)" },
+  { id: "a4", at: daysAgo(6, 9), user: "Ana Administradora", action: "update", detail: "Preço de troca do P13: 110,00 → 115,00" },
 ];

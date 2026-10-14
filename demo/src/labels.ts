@@ -2,13 +2,14 @@ import type { Tone } from "./components/ui";
 import type { MovementType, PurchaseStatus } from "./data/types";
 
 export const MOVEMENT_LABELS: Record<MovementType, string> = {
-  purchase_receipt: "Recebimento de compra",
+  purchase_receipt: "Carga recebida",
+  shell_return: "Vazios devolvidos",
   sale: "Venda",
+  shell_in: "Vasilhame recebido",
   sale_cancellation: "Cancelamento de venda",
   manual_entry: "Entrada manual",
   manual_exit: "Saída manual",
-  adjustment: "Ajuste de saldo",
-  inventory: "Inventário",
+  adjustment: "Ajuste de contagem",
 };
 
 export const PURCHASE_STATUS: Record<PurchaseStatus, { label: string; tone: Tone }> = {

@@ -1,168 +1,125 @@
-import { Download, PackagePlus, Pencil, Upload } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { ChevronDown, Download, Droplets, Flame, PackagePlus, Pencil, Wrench } from "lucide-react";
+import { useState } from "react";
 
-import { Badge, brl, Button, Card, Field, Input, Modal, num, PageHeader, SearchInput, Select, Table, Tabs, Textarea, useFeedback, usePagination } from "../components/ui";
-import type { Product } from "../data/types";
-import { useStore } from "../store";
-import { downloadCsv, parseCsv } from "../csv";
+import { Badge, brl, Button, Card, cx, Field, Input, Modal, Notice, PageHeader, Table, useFeedback } from "../components/ui";
+import { downloadCsv } from "../csv";
+import type { Product, ProductKind } from "../data/types";
+import { type ProductDraft, useStore } from "../store";
 
-type Draft = Omit<Product, "id" | "code" | "stock"> & { id?: string; initialStock?: number };
+const KINDS: { value: ProductKind; label: string; icon: typeof Flame }[] = [
+  { value: "gas", label: "Gás (GLP)", icon: Flame },
+  { value: "agua", label: "Água", icon: Droplets },
+  { value: "acessorio", label: "Acessório", icon: Wrench },
+  { value: "outro", label: "Outro", icon: PackagePlus },
+];
 
-const empty: Draft = {
-  barcode: "", name: "", description: "", category: "", brand: "", supplierId: null, cost: 0, price: 0,
-  minStock: 0, unit: "UN", location: "", active: true, ncm: "", cest: "", origin: 0, cfop: "5102", initialStock: 0,
+const blank: ProductDraft = {
+  kind: "gas", name: "", capacity: "", returnable: true, priceExchange: 0, priceFull: 0, costExchange: 0, costShell: 0,
+  minStock: 0, active: true, barcode: "", ncm: "27111910", anpCode: "210203001", initialFull: 0, initialEmpty: 0,
 };
 
+/** Modelos para cadastrar em um clique (preços sugeridos editáveis). */
+const PRESETS: { label: string; draft: Partial<ProductDraft> }[] = [
+  { label: "P13", draft: { kind: "gas", name: "Gás P13 (botijão de cozinha)", capacity: "13 kg", returnable: true, minStock: 20 } },
+  { label: "P45", draft: { kind: "gas", name: "Gás P45 (cilindro)", capacity: "45 kg", returnable: true, minStock: 5 } },
+  { label: "P20", draft: { kind: "gas", name: "Gás P20 (empilhadeira)", capacity: "20 kg", returnable: true, minStock: 3 } },
+  { label: "P8", draft: { kind: "gas", name: "Gás P8", capacity: "8 kg", returnable: true, minStock: 3 } },
+  { label: "P5", draft: { kind: "gas", name: "Gás P5 (camping)", capacity: "5 kg", returnable: true, minStock: 3 } },
+  { label: "Água 20 L", draft: { kind: "agua", name: "Água mineral galão", capacity: "20 L", returnable: true, ncm: "22011000", anpCode: "", minStock: 15 } },
+  { label: "Água 10 L", draft: { kind: "agua", name: "Água mineral galão 10 L", capacity: "10 L", returnable: true, ncm: "22011000", anpCode: "", minStock: 10 } },
+  { label: "Acessório", draft: { kind: "acessorio", name: "", capacity: "un", returnable: false, ncm: "", anpCode: "", minStock: 5 } },
+];
+
 export function Produtos() {
-  const { products, suppliers, can, saveProduct } = useStore();
+  const { products, can, saveProduct } = useStore();
   const { run } = useFeedback();
-  const [q, setQ] = useState("");
-  const [category, setCategory] = useState("");
-  const [stockFilter, setStockFilter] = useState<"all" | "low" | "out" | "inactive">("all");
-  const [editing, setEditing] = useState<Draft | null>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
+  const [editing, setEditing] = useState<ProductDraft | null>(null);
+  const [showInactive, setShowInactive] = useState(false);
+  const list = products.filter((p) => p.active || showInactive).sort((a, b) => Number(b.returnable) - Number(a.returnable) || a.code - b.code);
+  const manage = can("products.manage");
 
-  const categories = [...new Set(products.map((p) => p.category))].sort();
-  const filtered = useMemo(() => {
-    const term = q.trim().toLowerCase();
-    return products
-      .filter((p) =>
-        !term || p.name.toLowerCase().includes(term) || p.barcode.includes(term) || String(p.code) === term,
-      )
-      .filter((p) => !category || p.category === category)
-      .filter((p) =>
-        stockFilter === "all" ? p.active
-          : stockFilter === "low" ? p.active && p.stock > 0 && p.stock <= p.minStock
-          : stockFilter === "out" ? p.active && p.stock <= 0
-          : !p.active,
-      )
-      .sort((a, b) => a.code - b.code);
-  }, [products, q, category, stockFilter]);
-  const { slice, control } = usePagination(filtered, 12);
-
-  const exportCsv = () =>
-    downloadCsv(
-      "produtos.csv",
-      ["codigo", "codigo_barras", "nome", "categoria", "marca", "preco_custo", "preco_venda", "estoque", "estoque_minimo", "unidade", "ncm"],
-      filtered.map((p) => [p.code, p.barcode, p.name, p.category, p.brand, p.cost, p.price, p.stock, p.minStock, p.unit, p.ncm]),
-    );
-
-  const importCsv = async (file: File) => {
-    const rows = parseCsv(await file.text());
-    let ok = 0;
-    for (const r of rows) {
-      const done = run(() =>
-        saveProduct({
-          ...empty,
-          name: r.nome ?? "",
-          barcode: r.codigo_barras ?? "",
-          category: r.categoria ?? "",
-          brand: r.marca ?? "",
-          cost: Number((r.preco_custo ?? "0").replace(",", ".")),
-          price: Number((r.preco_venda ?? "0").replace(",", ".")),
-          minStock: Number(r.estoque_minimo ?? 0),
-          unit: (r.unidade || "UN").toUpperCase(),
-          ncm: r.ncm ?? "",
-        }),
-      );
-      if (done) ok++;
-    }
-    run(() => {
-      if (rows.length === 0) throw new Error("Arquivo vazio ou sem cabeçalho (nome;preco_venda;…).");
-    }, `${ok} de ${rows.length} produto(s) importado(s).`);
-  };
+  const savePrice = (p: Product, field: "priceExchange" | "priceFull", value: number) =>
+    run(() => saveProduct({ ...p, [field]: value }), `Preço de ${p.name.split(" (")[0]} atualizado para ${brl(value)}.`);
 
   return (
     <>
       <PageHeader
         title="Produtos"
-        description="Cadastro, preços, saldo e dados fiscais."
+        description="Gás, água e acessórios. Botijões e galões controlam estoque de cheios e vazios."
         actions={
           <>
-            <Button onClick={exportCsv}>
-              <Download className="size-4" /> Exportar CSV
+            <Button
+              onClick={() =>
+                downloadCsv(
+                  "produtos.csv",
+                  ["codigo", "produto", "capacidade", "preco_troca", "preco_completo", "custo", "cheios", "vazios", "minimo"],
+                  list.map((p) => [p.code, p.name, p.capacity, p.priceExchange, p.returnable ? p.priceFull : "", p.costExchange, p.stockFull, p.returnable ? p.stockEmpty : "", p.minStock]),
+                )
+              }
+            >
+              <Download className="size-4" /> Exportar
             </Button>
-            {can("products.manage") && (
-              <>
-                <Button onClick={() => fileRef.current?.click()}>
-                  <Upload className="size-4" /> Importar CSV
-                </Button>
-                <input
-                  ref={fileRef}
-                  type="file"
-                  accept=".csv,text/csv"
-                  hidden
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (f) void importCsv(f);
-                    e.target.value = "";
-                  }}
-                />
-                <Button variant="primary" onClick={() => setEditing({ ...empty })}>
-                  <PackagePlus className="size-4" /> Novo produto
-                </Button>
-              </>
+            {manage && (
+              <Button variant="primary" onClick={() => setEditing({ ...blank })}>
+                <PackagePlus className="size-4" /> Novo produto
+              </Button>
             )}
           </>
         }
       />
-      <Card>
-        <div className="flex flex-wrap items-center gap-2 border-b border-line p-3">
-          <SearchInput value={q} onChange={setQ} placeholder="Nome, código ou código de barras" />
-          <Select value={category} onChange={(e) => setCategory(e.target.value)} className="w-auto">
-            <option value="">Todas as categorias</option>
-            {categories.map((c) => (
-              <option key={c}>{c}</option>
+      {manage && (
+        <Card className="mb-4 p-3">
+          <p className="mb-2 text-xs font-medium text-fg-2">Cadastro rápido — escolha um modelo:</p>
+          <div className="flex flex-wrap gap-2">
+            {PRESETS.map((pr) => (
+              <Button key={pr.label} size="sm" onClick={() => setEditing({ ...blank, ...pr.draft })}>
+                {pr.draft.kind === "agua" ? <Droplets className="size-3.5" /> : pr.draft.kind === "gas" ? <Flame className="size-3.5" /> : <Wrench className="size-3.5" />}
+                {pr.label}
+              </Button>
             ))}
-          </Select>
-          <Tabs
-            value={stockFilter}
-            onChange={setStockFilter}
-            items={[
-              { value: "all", label: "Ativos" },
-              { value: "low", label: "Estoque baixo" },
-              { value: "out", label: "Sem estoque" },
-              { value: "inactive", label: "Inativos" },
-            ]}
-          />
-        </div>
+          </div>
+        </Card>
+      )}
+      <Card>
         <Table
-          empty={filtered.length === 0}
+          empty={list.length === 0}
           head={
             <>
-              <th>Cód.</th>
               <th>Produto</th>
-              <th>Categoria</th>
-              <th className="text-right">Custo</th>
-              <th className="text-right">Venda</th>
-              <th className="text-right">Margem</th>
-              <th className="text-right">Estoque</th>
-              <th>Local</th>
+              <th className="text-right">Troca / preço</th>
+              <th className="text-right">Completo</th>
+              <th className="text-right">Margem troca</th>
+              <th className="text-center">Cheios</th>
+              <th className="text-center">Vazios</th>
               <th />
             </>
           }
         >
-          {slice.map((p) => {
-            const margin = p.price > 0 ? ((p.price - p.cost) / p.price) * 100 : 0;
+          {list.map((p) => {
+            const margin = p.priceExchange > 0 ? ((p.priceExchange - p.costExchange) / p.priceExchange) * 100 : 0;
             return (
-              <tr key={p.id} className="hover:bg-surface-2/60">
-                <td className="tabular text-fg-3">{p.code}</td>
+              <tr key={p.id} className={cx(!p.active && "opacity-60")}>
                 <td>
                   <div className="font-medium">{p.name}</div>
-                  <div className="tabular text-xs text-fg-3">{p.barcode} · {p.brand}</div>
+                  <div className="text-xs text-fg-3">
+                    {KINDS.find((k) => k.value === p.kind)?.label} · {p.capacity} · cód. {p.code}
+                    {!p.active && " · inativo"}
+                  </div>
                 </td>
-                <td className="text-fg-2">{p.category}</td>
-                <td className="tabular text-right text-fg-2">{brl(p.cost)}</td>
-                <td className="tabular text-right font-medium">{brl(p.price)}</td>
-                <td className="tabular text-right text-fg-2">{margin.toFixed(1)}%</td>
                 <td className="text-right">
-                  <Badge tone={p.stock <= 0 ? "bad" : p.stock <= p.minStock ? "warn" : "neutral"}>
-                    {num(p.stock)} {p.unit}
-                  </Badge>
+                  <PriceCell value={p.priceExchange} editable={manage} onSave={(v) => savePrice(p, "priceExchange", v)} />
                 </td>
-                <td className="text-fg-3">{p.location}</td>
                 <td className="text-right">
-                  {can("products.manage") && (
+                  {p.returnable ? <PriceCell value={p.priceFull} editable={manage} onSave={(v) => savePrice(p, "priceFull", v)} /> : <span className="text-fg-3">—</span>}
+                </td>
+                <td className="tabular text-right text-fg-2">{margin.toFixed(0)}%</td>
+                <td className="text-center">
+                  <Badge tone={p.stockFull <= 0 ? "bad" : p.stockFull <= p.minStock ? "warn" : "good"}>{p.stockFull}</Badge>
+                  <span className="block text-[11px] text-fg-3">mín. {p.minStock}</span>
+                </td>
+                <td className="tabular text-center text-fg-2">{p.returnable ? p.stockEmpty : "—"}</td>
+                <td className="text-right">
+                  {manage && (
                     <Button size="sm" variant="ghost" aria-label={`Editar ${p.name}`} onClick={() => setEditing({ ...p })}>
                       <Pencil className="size-4" />
                     </Button>
@@ -172,182 +129,183 @@ export function Produtos() {
             );
           })}
         </Table>
-        {control}
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line px-4 py-2.5 text-xs text-fg-3">
+          <span>{manage ? "Dica: clique no preço para reajustar na hora." : "Somente consulta para o seu perfil."}</span>
+          <label className="flex items-center gap-2">
+            <input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} /> Mostrar inativos
+          </label>
+        </div>
       </Card>
 
       {editing && (
-        <ProductForm
-          draft={editing}
-          categories={categories}
-          suppliers={suppliers.map((s) => ({ id: s.id, name: s.tradeName || s.legalName }))}
-          onClose={() => setEditing(null)}
-          onSave={(d) => run(() => saveProduct(d), d.id ? "Produto atualizado." : "Produto cadastrado.") && setEditing(null)}
-        />
+        <ProductForm draft={editing} onClose={() => setEditing(null)} onSave={(d) => run(() => saveProduct(d), d.id ? "Produto atualizado." : "Produto cadastrado.") && setEditing(null)} />
       )}
     </>
   );
 }
 
-function ProductForm({
-  draft,
-  categories,
-  suppliers,
-  onClose,
-  onSave,
-}: {
-  draft: Draft;
-  categories: string[];
-  suppliers: { id: string; name: string }[];
-  onClose: () => void;
-  onSave: (d: Draft) => void;
-}) {
-  const [d, setD] = useState(draft);
-  const [tab, setTab] = useState<"geral" | "estoque" | "fiscal">("geral");
-  const [errors, setErrors] = useState<Record<string, string>>({});
-  const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setD((x) => ({ ...x, [k]: v }));
-  const margin = d.price > 0 ? ((d.price - d.cost) / d.price) * 100 : 0;
-
-  const submit = () => {
-    const e: Record<string, string> = {};
-    if (d.name.trim().length < 2) e.name = "Informe o nome do produto.";
-    if (!(d.price >= 0)) e.price = "Preço inválido.";
-    if (!(d.cost >= 0)) e.cost = "Custo inválido.";
-    if (d.ncm && !/^\d{8}$/.test(d.ncm)) e.ncm = "NCM deve ter 8 dígitos.";
-    if (d.cest && !/^\d{7}$/.test(d.cest)) e.cest = "CEST deve ter 7 dígitos.";
-    if (d.barcode && !/^[0-9A-Za-z]{1,30}$/.test(d.barcode)) e.barcode = "Código de barras inválido.";
-    setErrors(e);
-    if (Object.keys(e).length) {
-      setTab(e.ncm || e.cest ? "fiscal" : "geral");
-      return;
-    }
-    onSave({ ...d, name: d.name.trim() });
+function PriceCell({ value, editable, onSave }: { value: number; editable: boolean; onSave: (v: number) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState("");
+  if (!editable) return <span className="tabular font-medium">{brl(value)}</span>;
+  if (!editing)
+    return (
+      <button
+        className="tabular rounded px-1.5 py-0.5 font-medium hover:bg-accent-soft hover:text-accent"
+        title="Clique para alterar o preço"
+        onClick={() => {
+          setText(value.toFixed(2).replace(".", ","));
+          setEditing(true);
+        }}
+      >
+        {brl(value)}
+      </button>
+    );
+  const commit = () => {
+    const v = Number(text.replace(",", "."));
+    setEditing(false);
+    if (v > 0 && v !== value) onSave(v);
   };
+  return (
+    <Input
+      autoFocus
+      inputMode="decimal"
+      value={text}
+      onChange={(e) => setText(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") commit();
+        if (e.key === "Escape") setEditing(false);
+      }}
+      className="ml-auto h-8 !w-24 text-right"
+    />
+  );
+}
+
+function ProductForm({ draft, onClose, onSave }: { draft: ProductDraft; onClose: () => void; onSave: (d: ProductDraft) => void }) {
+  const [d, setD] = useState(draft);
+  const [advanced, setAdvanced] = useState(false);
+  const set = <K extends keyof ProductDraft>(k: K, v: ProductDraft[K]) => setD((x) => ({ ...x, [k]: v }));
+  const n = (s: string) => Number(s.replace(",", ".") || "0");
+  const marginEx = d.priceExchange > 0 ? ((d.priceExchange - d.costExchange) / d.priceExchange) * 100 : 0;
 
   return (
     <Modal
       open
-      size="lg"
-      title={d.id ? `Editar produto` : "Novo produto"}
+      title={d.id ? "Editar produto" : "Novo produto"}
       onClose={onClose}
       footer={
         <>
           <Button onClick={onClose}>Cancelar</Button>
-          <Button variant="primary" onClick={submit}>
+          <Button variant="primary" onClick={() => onSave({ ...d, name: d.name.trim() })}>
             Salvar
           </Button>
         </>
       }
     >
-      <Tabs
-        value={tab}
-        onChange={setTab}
-        items={[
-          { value: "geral", label: "Dados gerais" },
-          { value: "estoque", label: "Preço e estoque" },
-          { value: "fiscal", label: "Fiscal" },
-        ]}
-      />
-      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-        {tab === "geral" && (
-          <>
-            <Field label="Nome *" error={errors.name} className="sm:col-span-2">
-              <Input value={d.name} onChange={(e) => set("name", e.target.value)} autoFocus />
-            </Field>
-            <Field label="Código de barras (EAN/GTIN)" error={errors.barcode}>
-              <Input value={d.barcode} onChange={(e) => set("barcode", e.target.value.trim())} inputMode="numeric" />
-            </Field>
-            <Field label="Código interno" hint="Gerado automaticamente">
-              <Input value={d.id ? "—" : "Automático"} disabled />
-            </Field>
-            <Field label="Categoria">
-              <Input list="cats" value={d.category} onChange={(e) => set("category", e.target.value)} />
-              <datalist id="cats">
-                {categories.map((c) => (
-                  <option key={c} value={c} />
-                ))}
-              </datalist>
-            </Field>
-            <Field label="Marca">
-              <Input value={d.brand} onChange={(e) => set("brand", e.target.value)} />
-            </Field>
-            <Field label="Fornecedor principal">
-              <Select value={d.supplierId ?? ""} onChange={(e) => set("supplierId", e.target.value || null)}>
-                <option value="">—</option>
-                {suppliers.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            <Field label="Situação">
-              <Select value={d.active ? "1" : "0"} onChange={(e) => set("active", e.target.value === "1")}>
-                <option value="1">Ativo</option>
-                <option value="0">Inativo</option>
-              </Select>
-            </Field>
-            <Field label="Descrição" className="sm:col-span-2">
-              <Textarea value={d.description} onChange={(e) => set("description", e.target.value)} />
-            </Field>
-          </>
-        )}
-        {tab === "estoque" && (
-          <>
-            <Field label="Preço de custo (R$)" error={errors.cost}>
-              <Input type="number" min={0} step="0.01" value={d.cost} onChange={(e) => set("cost", Number(e.target.value))} />
-            </Field>
-            <Field label="Preço de venda (R$)" error={errors.price} hint={`Margem sobre a venda: ${margin.toFixed(1)}%`}>
-              <Input type="number" min={0} step="0.01" value={d.price} onChange={(e) => set("price", Number(e.target.value))} />
-            </Field>
-            <Field label="Unidade de medida">
-              <Select value={d.unit} onChange={(e) => set("unit", e.target.value)}>
-                {["UN", "CX", "KG", "G", "L", "ML", "M", "PCT", "PAR"].map((u) => (
-                  <option key={u}>{u}</option>
-                ))}
-              </Select>
-            </Field>
-            <Field label="Estoque mínimo">
-              <Input type="number" min={0} value={d.minStock} onChange={(e) => set("minStock", Number(e.target.value))} />
-            </Field>
-            <Field label="Localização no estoque" hint="Ex.: corredor A, prateleira 3">
-              <Input value={d.location} onChange={(e) => set("location", e.target.value)} />
-            </Field>
-            {!d.id && (
-              <Field label="Estoque inicial" hint="Lançado como movimentação de entrada">
-                <Input type="number" min={0} value={d.initialStock ?? 0} onChange={(e) => set("initialStock", Number(e.target.value))} />
-              </Field>
+      <div className="grid grid-cols-4 gap-1.5">
+        {KINDS.map((k) => (
+          <button
+            key={k.value}
+            onClick={() => {
+              const ret = k.value === "gas" || k.value === "agua";
+              setD((x) => ({ ...x, kind: k.value, returnable: ret, ncm: k.value === "gas" ? "27111910" : k.value === "agua" ? "22011000" : x.ncm, anpCode: k.value === "gas" ? "210203001" : "" }));
+            }}
+            className={cx(
+              "flex flex-col items-center gap-1 rounded-lg border py-2.5 text-xs font-medium transition",
+              d.kind === k.value ? "border-accent bg-accent-soft text-accent" : "border-line text-fg-2 hover:bg-surface-2",
             )}
-            {d.id && (
-              <p className="text-xs text-fg-3 sm:col-span-2">
-                O saldo só muda por movimentações (entrada, saída, ajuste, venda, recebimento) — use a tela de Movimentações.
-              </p>
-            )}
-          </>
+          >
+            <k.icon className="size-4" />
+            {k.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <Field label="Nome do produto *" className="sm:col-span-2">
+          <Input autoFocus value={d.name} onChange={(e) => set("name", e.target.value)} placeholder={d.kind === "gas" ? "Ex.: Gás P13" : "Ex.: Regulador de gás"} />
+        </Field>
+        <Field label="Capacidade / unidade">
+          <Input value={d.capacity} onChange={(e) => set("capacity", e.target.value)} placeholder="13 kg, 20 L, un" />
+        </Field>
+      </div>
+
+      <label className="mt-3 flex items-start gap-2.5 rounded-lg bg-surface-2 p-3 text-sm">
+        <input type="checkbox" className="mt-0.5 size-4" checked={d.returnable} onChange={(e) => set("returnable", e.target.checked)} />
+        <span>
+          <b>Tem vasilhame retornável</b> (botijão ou galão)
+          <span className="block text-xs text-fg-3">Vende na troca ou completo e controla cheios e vazios no estoque.</span>
+        </span>
+      </label>
+
+      <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <Field label={d.returnable ? "Preço na troca *" : "Preço de venda *"} hint={d.returnable ? "Cliente traz o vazio" : undefined}>
+          <Input inputMode="decimal" defaultValue={d.priceExchange || ""} onChange={(e) => set("priceExchange", n(e.target.value))} placeholder="0,00" />
+        </Field>
+        {d.returnable && (
+          <Field label="Preço completo *" hint="Leva o vasilhame">
+            <Input inputMode="decimal" defaultValue={d.priceFull || ""} onChange={(e) => set("priceFull", n(e.target.value))} placeholder="0,00" />
+          </Field>
         )}
-        {tab === "fiscal" && (
-          <>
-            <Field label="NCM" error={errors.ncm} hint="8 dígitos">
-              <Input value={d.ncm} onChange={(e) => set("ncm", e.target.value.replace(/\D/g, ""))} inputMode="numeric" />
-            </Field>
-            <Field label="CEST" error={errors.cest} hint="7 dígitos, quando aplicável">
-              <Input value={d.cest} onChange={(e) => set("cest", e.target.value.replace(/\D/g, ""))} inputMode="numeric" />
-            </Field>
-            <Field label="Origem da mercadoria">
-              <Select value={d.origin} onChange={(e) => set("origin", Number(e.target.value))}>
-                <option value={0}>0 — Nacional</option>
-                <option value={1}>1 — Estrangeira, importação direta</option>
-                <option value={2}>2 — Estrangeira, mercado interno</option>
-              </Select>
-            </Field>
-            <Field label="Regra tributária (CFOP)" hint="Definida com o contador">
-              <Select value={d.cfop} onChange={(e) => set("cfop", e.target.value)}>
-                <option value="5102">5102 — Venda de mercadoria (Simples: CSOSN 102)</option>
-                <option value="5405">5405 — Venda com ST (CSOSN 500)</option>
-              </Select>
-            </Field>
-          </>
+        <Field label={d.returnable ? "Custo da recarga" : "Custo"} hint={`Margem: ${marginEx.toFixed(0)}%`}>
+          <Input inputMode="decimal" defaultValue={d.costExchange || ""} onChange={(e) => set("costExchange", n(e.target.value))} placeholder="0,00" />
+        </Field>
+        {d.returnable && (
+          <Field label="Custo do vasilhame">
+            <Input inputMode="decimal" defaultValue={d.costShell || ""} onChange={(e) => set("costShell", n(e.target.value))} placeholder="0,00" />
+          </Field>
         )}
       </div>
+
+      <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {!d.id && (
+          <>
+            <Field label={d.returnable ? "Cheios em estoque" : "Estoque inicial"}>
+              <Input type="number" min={0} defaultValue={d.initialFull || ""} onChange={(e) => set("initialFull", Number(e.target.value))} placeholder="0" />
+            </Field>
+            {d.returnable && (
+              <Field label="Vazios em estoque">
+                <Input type="number" min={0} defaultValue={d.initialEmpty || ""} onChange={(e) => set("initialEmpty", Number(e.target.value))} placeholder="0" />
+              </Field>
+            )}
+          </>
+        )}
+        <Field label="Avisar quando ficar com" hint="Estoque mínimo">
+          <Input type="number" min={0} value={d.minStock} onChange={(e) => set("minStock", Number(e.target.value))} />
+        </Field>
+        {d.id && (
+          <Field label="Situação">
+            <select className="h-9 w-full rounded-lg border border-line bg-surface px-3 text-sm" value={d.active ? "1" : "0"} onChange={(e) => set("active", e.target.value === "1")}>
+              <option value="1">Ativo</option>
+              <option value="0">Inativo</option>
+            </select>
+          </Field>
+        )}
+      </div>
+      {d.id && <p className="mt-2 text-xs text-fg-3">O estoque muda pelas vendas, cargas recebidas e movimentações (tela Estoque).</p>}
+
+      <button className="mt-4 flex items-center gap-1 text-sm font-medium text-accent" onClick={() => setAdvanced(!advanced)}>
+        <ChevronDown className={cx("size-4 transition", advanced && "rotate-180")} /> Dados fiscais (opcional)
+      </button>
+      {advanced && (
+        <div className="mt-3 space-y-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <Field label="NCM">
+              <Input value={d.ncm} onChange={(e) => set("ncm", e.target.value.replace(/\D/g, ""))} />
+            </Field>
+            <Field label="Código ANP" hint="GLP: 210203001">
+              <Input value={d.anpCode} onChange={(e) => set("anpCode", e.target.value.replace(/\D/g, ""))} />
+            </Field>
+            <Field label="Código de barras">
+              <Input value={d.barcode} onChange={(e) => set("barcode", e.target.value.trim())} />
+            </Field>
+          </div>
+          {d.kind === "gas" && (
+            <Notice>A NF-e/NFC-e de GLP exige código ANP e tributação monofásica de ICMS — confirme CST e alíquotas com o contador.</Notice>
+          )}
+        </div>
+      )}
     </Modal>
   );
 }

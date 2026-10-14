@@ -1,291 +1,258 @@
-import {
-  AlertTriangle,
-  ArrowDownCircle,
-  ArrowUpCircle,
-  ClipboardList,
-  DollarSign,
-  Package,
-  PackageX,
-  ShoppingBag,
-  Truck,
-  Users,
-} from "lucide-react";
+import { AlertTriangle, Bike, Clock, DollarSign, Flame, MessageCircle, Receipt, ShoppingCart, Wallet } from "lucide-react";
 import { useMemo, useState } from "react";
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
-import { Badge, brl, Card, CardHeader, dateTime, Kpi, num, PageHeader, Tabs } from "../components/ui";
-import { MOVEMENT_LABELS } from "../labels";
+import { Badge, brl, Button, buttonClass, Card, CardHeader, Kpi, num, PageHeader, Tabs } from "../components/ui";
+import { COMPANY } from "../data/seed";
+import type { Sale } from "../data/types";
 import { navigate } from "../router";
 import { useStore } from "../store";
+import { customerHistory, METHOD_LABELS } from "./Pdv";
 
 type Period = "7" | "30" | "90";
-type Grain = "day" | "week" | "month";
+type Metric = "valor" | "unidades";
 
 const dayKey = (d: Date) => d.toISOString().slice(0, 10);
-const short = (n: number) =>
-  n >= 1000 ? `${(n / 1000).toLocaleString("pt-BR", { maximumFractionDigits: n >= 10000 ? 0 : 1 })} mil` : n.toLocaleString("pt-BR");
+const axis = { stroke: "var(--text-3)", fontSize: 11, tickLine: false, axisLine: false } as const;
+const shortMoney = (n: number) => (n >= 1000 ? `${(n / 1000).toLocaleString("pt-BR", { maximumFractionDigits: n >= 10000 ? 0 : 1 })} mil` : String(Math.round(n)));
+const gasUnits = (s: Sale, productIds: Set<string>) => s.items.filter((i) => productIds.has(i.productId)).reduce((a, i) => a + i.quantity, 0);
 
-function ChartTooltip({ active, payload, label, money = true }: { active?: boolean; payload?: { value: number }[]; label?: string; money?: boolean }) {
+function ChartTooltip({ active, payload, label, metric }: { active?: boolean; payload?: { value: number }[]; label?: string; metric: Metric }) {
   if (!active || !payload?.length) return null;
   return (
     <div className="rounded-lg border border-line bg-surface px-3 py-2 text-xs shadow-lg">
       <p className="text-fg-3">{label}</p>
-      <p className="tabular mt-0.5 font-semibold text-fg">{money ? brl(payload[0].value) : num(payload[0].value)}</p>
+      <p className="tabular mt-0.5 font-semibold text-fg">{metric === "valor" ? brl(payload[0].value) : `${num(payload[0].value)} botijões`}</p>
     </div>
   );
 }
 
-const axis = { stroke: "var(--text-3)", fontSize: 11, tickLine: false, axisLine: false } as const;
-
 export function Dashboard() {
-  const { products, customers, suppliers, sales, purchaseOrders, titles, movements, can, user } = useStore();
+  const { products, sales, customers, titles, can, user } = useStore();
   const [period, setPeriod] = useState<Period>("30");
-  const [grain, setGrain] = useState<Grain>("day");
+  const [metric, setMetric] = useState<Metric>("valor");
   const onlyOwn = !can("sales.view_all");
+  const gasIds = useMemo(() => new Set(products.filter((p) => p.kind === "gas").map((p) => p.id)), [products]);
 
-  const data = useMemo(() => {
-    const since = new Date();
-    since.setHours(0, 0, 0, 0);
-    since.setDate(since.getDate() - (Number(period) - 1));
-    const completed = sales.filter((s) => s.status === "completed" && (!onlyOwn || s.seller === user.name));
-    const inPeriod = completed.filter((s) => new Date(s.at) >= since);
-    const todayKey = dayKey(new Date());
-    const today = completed.filter((s) => s.at.slice(0, 10) === todayKey);
-    const monthStart = new Date();
-    monthStart.setDate(1);
-    monthStart.setHours(0, 0, 0, 0);
-    const month = completed.filter((s) => new Date(s.at) >= monthStart);
+  const completed = sales.filter((s) => s.status === "completed" && (!onlyOwn || s.seller === user.name));
+  const todayKey = dayKey(new Date());
+  const today = completed.filter((s) => s.at.slice(0, 10) === todayKey);
+  const todayTotal = today.reduce((a, s) => a + s.total, 0);
+  const todayGas = today.reduce((a, s) => a + gasUnits(s, gasIds), 0);
+  const p13 = products.find((p) => p.name.startsWith("Gás P13"));
+  const todayP13 = p13 ? today.reduce((a, s) => a + s.items.filter((i) => i.productId === p13.id).reduce((b, i) => b + i.quantity, 0), 0) : 0;
+  const openDeliveries = sales.filter((s) => s.status === "completed" && s.delivery && s.delivery.status !== "entregue");
+  const pending = openDeliveries.filter((s) => s.delivery!.status === "pendente").length;
+  const toCollect = openDeliveries.filter((s) => !s.paid).reduce((a, s) => a + s.total, 0);
 
-    // Série temporal pela granularidade escolhida
-    const buckets = new Map<string, { label: string; total: number }>();
-    for (let d = new Date(since); d <= new Date(); d.setDate(d.getDate() + 1)) {
-      let key: string;
-      let label: string;
-      if (grain === "day") {
-        key = dayKey(d);
-        label = d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
-      } else if (grain === "week") {
-        const monday = new Date(d);
-        monday.setDate(d.getDate() - ((d.getDay() + 6) % 7));
-        key = dayKey(monday);
-        label = `sem. ${monday.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })}`;
-      } else {
-        key = d.toISOString().slice(0, 7);
-        label = d.toLocaleDateString("pt-BR", { month: "short", year: "2-digit" });
-      }
-      if (!buckets.has(key)) buckets.set(key, { label, total: 0 });
+  const chart = useMemo(() => {
+    const days = Number(period);
+    const rows: { label: string; key: string; valor: number; unidades: number }[] = [];
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      rows.push({ key: dayKey(d), label: d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }), valor: 0, unidades: 0 });
     }
-    for (const s of inPeriod) {
-      const d = new Date(s.at);
-      let key: string;
-      if (grain === "day") key = dayKey(d);
-      else if (grain === "week") {
-        const monday = new Date(d);
-        monday.setHours(12, 0, 0, 0);
-        monday.setDate(d.getDate() - ((d.getDay() + 6) % 7));
-        key = dayKey(monday);
-      } else key = s.at.slice(0, 7);
-      const b = buckets.get(key);
-      if (b) b.total += s.total;
+    const idx = new Map(rows.map((r, i) => [r.key, i]));
+    for (const s of completed) {
+      const i = idx.get(s.at.slice(0, 10));
+      if (i === undefined) continue;
+      rows[i].valor += s.total;
+      rows[i].unidades += gasUnits(s, gasIds);
     }
-    const series = [...buckets.values()].map((b) => ({ ...b, total: Math.round(b.total * 100) / 100 }));
-    let acc = 0;
-    const cumulative = series.map((b) => ({ label: b.label, total: Math.round((acc += b.total) * 100) / 100 }));
-
+    rows.forEach((r) => (r.valor = Math.round(r.valor * 100) / 100));
+    const inPeriod = completed.filter((s) => idx.has(s.at.slice(0, 10)));
+    const total = inPeriod.reduce((a, s) => a + s.total, 0);
     const byProduct = new Map<string, { name: string; qty: number; revenue: number }>();
     for (const s of inPeriod)
       for (const it of s.items) {
-        const cur = byProduct.get(it.productId) ?? { name: it.name, qty: 0, revenue: 0 };
+        const cur = byProduct.get(it.productId) ?? { name: it.name.split(" (")[0], qty: 0, revenue: 0 };
         cur.qty += it.quantity;
         cur.revenue += it.total;
         byProduct.set(it.productId, cur);
       }
-    const top = [...byProduct.values()].sort((a, b) => b.revenue - a.revenue).slice(0, 6);
-
-    const revenue = inPeriod.reduce((a, s) => a + s.total, 0);
-    const cost = inPeriod.reduce((a, s) => a + s.items.reduce((b, i) => b + i.unitCost * i.quantity, 0), 0);
+    const deliveries = inPeriod.filter((s) => s.channel === "entrega").length;
     return {
-      today: { count: today.length, total: today.reduce((a, s) => a + s.total, 0) },
-      monthTotal: month.reduce((a, s) => a + s.total, 0),
-      revenue,
-      grossProfit: revenue - cost,
+      rows,
+      total,
       count: inPeriod.length,
-      ticket: inPeriod.length ? revenue / inPeriod.length : 0,
-      series,
-      cumulative,
-      top,
+      ticket: inPeriod.length ? total / inPeriod.length : 0,
+      deliveryShare: inPeriod.length ? (deliveries / inPeriod.length) * 100 : 0,
+      top: [...byProduct.values()].sort((a, b) => b.revenue - a.revenue).slice(0, 6),
     };
-  }, [sales, period, grain, onlyOwn, user.name]);
+  }, [completed, period, gasIds]);
 
-  const active = products.filter((p) => p.active);
-  const low = active.filter((p) => p.stock > 0 && p.stock <= p.minStock);
-  const out = active.filter((p) => p.stock <= 0);
-  const pendingPO = purchaseOrders.filter((o) => ["sent", "confirmed", "partially_received"].includes(o.status));
-  const open = (k: "payable" | "receivable") =>
-    titles.filter((t) => t.kind === k && (t.status === "open" || t.status === "partially_paid")).reduce((a, t) => a + t.amount - t.paid, 0);
-  const overdue = (k: "payable" | "receivable") =>
-    titles.filter((t) => t.kind === k && t.status === "open" && t.dueDate < dayKey(new Date())).length;
+  const methodsToday = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const s of today) m.set(s.method, (m.get(s.method) ?? 0) + s.total);
+    return [...m.entries()].sort((a, b) => b[1] - a[1]);
+  }, [today]);
+
+  // Clientes que costumam comprar e já estão "na hora" de comprar de novo
+  const reminders = useMemo(() => {
+    const now = Date.now();
+    return customers
+      .map((c) => {
+        const h = customerHistory(sales, c.id);
+        if (!h.last || !h.avgDays || h.count < 2) return null;
+        const since = Math.floor((now - new Date(h.last.at).getTime()) / 86400000);
+        return { c, h, since, due: since - h.avgDays };
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null && x.due >= -2 && x.since >= 3)
+      .sort((a, b) => b.due - a.due)
+      .slice(0, 8);
+  }, [customers, sales]);
+
+  const returnables = products.filter((p) => p.active && p.returnable);
+  const low = products.filter((p) => p.active && p.stockFull <= p.minStock);
+  const overdue = titles.filter((t) => t.status === "open" && t.dueDate < todayKey);
 
   return (
     <>
       <PageHeader
-        title={`Olá, ${user.name.split(" ")[0]}`}
-        description={onlyOwn ? "Indicadores das suas vendas." : "Visão geral da operação."}
+        title={`${new Date().getHours() < 12 ? "Bom dia" : new Date().getHours() < 18 ? "Boa tarde" : "Boa noite"}, ${user.name.split(" ")[0]}!`}
+        description={onlyOwn ? "Resumo das suas vendas." : "Resumo das vendas e do estoque da revenda."}
         actions={
-          <Tabs<Period>
-            value={period}
-            onChange={setPeriod}
-            items={[
-              { value: "7", label: "7 dias" },
-              { value: "30", label: "30 dias" },
-              { value: "90", label: "90 dias" },
-            ]}
-          />
+          can("sales.create") && (
+            <Button variant="primary" onClick={() => navigate("pdv")}>
+              <ShoppingCart className="size-4" /> Nova venda
+            </Button>
+          )
         }
       />
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <Kpi icon={ShoppingBag} label="Vendas hoje" value={brl(data.today.total)} hint={`${data.today.count} venda(s)`} />
-        <Kpi icon={DollarSign} label={`Faturamento (${period} dias)`} value={brl(data.revenue)} hint={`${data.count} vendas · ticket médio ${brl(data.ticket)}`} />
-        <Kpi icon={DollarSign} label="Faturamento do mês" value={brl(data.monthTotal)} hint={can("finance.view") ? `Lucro bruto no período: ${brl(data.grossProfit)}` : undefined} />
-        <Kpi icon={Package} label="Produtos ativos" value={num(active.length)} hint={`${products.length} cadastrados`} onClick={() => navigate("produtos")} />
-        <Kpi icon={AlertTriangle} tone="warn" label="Estoque baixo" value={num(low.length)} hint="No mínimo ou abaixo" onClick={() => navigate("produtos")} />
-        <Kpi icon={PackageX} tone="bad" label="Sem estoque" value={num(out.length)} hint="Saldo zerado" onClick={() => navigate("produtos")} />
-        {can("customers.view") && <Kpi icon={Users} label="Clientes" value={num(customers.length)} onClick={() => navigate("clientes")} />}
-        {can("suppliers.view") && <Kpi icon={Truck} label="Fornecedores" value={num(suppliers.length)} onClick={() => navigate("fornecedores")} />}
-        {can("purchases.view") && (
-          <Kpi icon={ClipboardList} tone="info" label="Pedidos de compra pendentes" value={num(pendingPO.length)} hint="Enviados, confirmados ou parciais" onClick={() => navigate("compras")} />
-        )}
-        {can("finance.view") && (
-          <>
-            <Kpi icon={ArrowUpCircle} label="A receber (em aberto)" value={brl(open("receivable"))} hint={`${overdue("receivable")} vencido(s)`} onClick={() => navigate("financeiro")} />
-            <Kpi icon={ArrowDownCircle} tone="warn" label="A pagar (em aberto)" value={brl(open("payable"))} hint={`${overdue("payable")} vencido(s)`} onClick={() => navigate("financeiro")} />
-          </>
-        )}
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+        <Kpi icon={DollarSign} label="Vendido hoje" value={brl(todayTotal)} hint={`${today.length} vendas`} />
+        <Kpi icon={Flame} label="Botijões vendidos hoje" value={num(todayGas)} hint={p13 ? `${todayP13} P13` : undefined} />
+        <Kpi icon={Bike} tone="info" label="Entregas em andamento" value={num(openDeliveries.length)} hint={`${pending} aguardando saída`} onClick={() => navigate("entregas")} />
+        <Kpi icon={Wallet} tone="warn" label="A receber nas entregas" value={brl(toCollect)} hint="Pagamento na porta" onClick={() => navigate("entregas")} />
       </div>
+
+      {(low.length > 0 || (can("finance.view") && overdue.length > 0)) && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {low.map((p) => (
+            <button key={p.id} onClick={() => navigate("estoque")} className="flex items-center gap-1.5 rounded-lg bg-warn-soft px-3 py-1.5 text-xs font-medium text-warn">
+              <AlertTriangle className="size-3.5" /> {p.name.split(" (")[0]}: {p.stockFull} {p.returnable ? "cheios" : "em estoque"} (mín. {p.minStock})
+            </button>
+          ))}
+          {can("finance.view") && overdue.length > 0 && (
+            <button onClick={() => navigate("financeiro")} className="flex items-center gap-1.5 rounded-lg bg-bad-soft px-3 py-1.5 text-xs font-medium text-bad">
+              <Clock className="size-3.5" /> {overdue.length} conta(s) vencida(s)
+            </button>
+          )}
+        </div>
+      )}
 
       <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-3">
         <Card className="flex flex-col xl:col-span-2">
           <CardHeader
-            title="Vendas"
-            subtitle="Valor vendido por período (vendas concluídas)"
+            title={metric === "valor" ? "Vendas por dia (R$)" : "Botijões de gás vendidos por dia"}
+            subtitle={`${chart.count} vendas · ${brl(chart.total)} · ticket médio ${brl(chart.ticket)} · ${chart.deliveryShare.toFixed(0)}% por entrega`}
             actions={
-              <Tabs<Grain>
-                value={grain}
-                onChange={setGrain}
-                items={[
-                  { value: "day", label: "Diário" },
-                  { value: "week", label: "Semanal" },
-                  { value: "month", label: "Mensal" },
-                ]}
-              />
+              <div className="flex flex-wrap gap-2">
+                <Tabs<Metric> value={metric} onChange={setMetric} items={[{ value: "valor", label: "R$" }, { value: "unidades", label: "Botijões" }]} />
+                <Tabs<Period> value={period} onChange={setPeriod} items={[{ value: "7", label: "7 d" }, { value: "30", label: "30 d" }, { value: "90", label: "90 d" }]} />
+              </div>
             }
           />
           <div className="h-64 flex-1 px-2 pt-4 pb-2 xl:h-auto xl:min-h-64">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={data.series} margin={{ left: 4, right: 8 }}>
+              <BarChart data={chart.rows} margin={{ left: 4, right: 8 }}>
                 <CartesianGrid vertical={false} stroke="var(--grid)" />
                 <XAxis dataKey="label" {...axis} minTickGap={12} />
-                <YAxis {...axis} width={64} tickFormatter={short} />
-                <Tooltip cursor={{ fill: "var(--surface-2)" }} content={<ChartTooltip />} />
-                <Bar dataKey="total" fill="var(--series-1)" radius={[4, 4, 0, 0]} maxBarSize={28} />
+                <YAxis {...axis} width={52} tickFormatter={metric === "valor" ? shortMoney : (v: number) => String(v)} allowDecimals={false} />
+                <Tooltip cursor={{ fill: "var(--surface-2)" }} content={<ChartTooltip metric={metric} />} />
+                <Bar dataKey={metric} fill="var(--series-1)" radius={[4, 4, 0, 0]} maxBarSize={28} />
               </BarChart>
             </ResponsiveContainer>
           </div>
         </Card>
 
         <Card>
-          <CardHeader title="Produtos mais vendidos" subtitle={`Por faturamento, últimos ${period} dias`} />
+          <CardHeader title="Estoque de vasilhames" subtitle="Cheios prontos para venda × vazios aguardando carga" />
           <ul className="divide-y divide-line">
-            {data.top.map((p, i) => {
-              const max = data.top[0]?.revenue || 1;
+            {returnables.map((p) => {
+              const max = Math.max(p.stockFull + p.stockEmpty, 1);
               return (
-                <li key={p.name} className="px-4 py-2.5">
+                <li key={p.id} className="px-4 py-2.5">
                   <div className="flex items-baseline justify-between gap-2 text-sm">
-                    <span className="truncate">
-                      <span className="mr-1.5 text-fg-3">{i + 1}.</span>
-                      {p.name}
+                    <span className="truncate font-medium">{p.name.split(" (")[0]}</span>
+                    <span className="tabular shrink-0 text-xs text-fg-2">
+                      <b className={p.stockFull <= p.minStock ? "text-warn" : "text-fg"}>{p.stockFull}</b> cheios · {p.stockEmpty} vazios
                     </span>
-                    <span className="tabular shrink-0 font-medium">{brl(p.revenue)}</span>
                   </div>
-                  <div className="mt-1.5 flex items-center gap-2">
-                    <div className="h-1.5 flex-1 rounded-full bg-surface-2">
-                      <div className="h-1.5 rounded-full bg-[var(--series-1)]" style={{ width: `${(p.revenue / max) * 100}%` }} />
-                    </div>
-                    <span className="tabular w-14 text-right text-xs text-fg-3">{num(p.qty)} un</span>
+                  <div className="mt-1.5 flex h-2 gap-0.5 overflow-hidden rounded-full bg-surface-2">
+                    <div className="h-2 rounded-full bg-[var(--series-1)]" style={{ width: `${(p.stockFull / max) * 100}%` }} />
+                    <div className="h-2 rounded-full bg-[var(--text-3)] opacity-40" style={{ width: `${(p.stockEmpty / max) * 100}%` }} />
                   </div>
                 </li>
               );
             })}
-            {data.top.length === 0 && <li className="px-4 py-8 text-center text-sm text-fg-3">Sem vendas no período.</li>}
           </ul>
+          <p className="flex gap-4 px-4 py-2 text-[11px] text-fg-3">
+            <span className="flex items-center gap-1"><span className="size-2 rounded-full bg-[var(--series-1)]" /> Cheios</span>
+            <span className="flex items-center gap-1"><span className="size-2 rounded-full bg-[var(--text-3)] opacity-40" /> Vazios</span>
+          </p>
         </Card>
 
         <Card className="xl:col-span-2">
-          <CardHeader title="Evolução do faturamento" subtitle="Faturamento acumulado no período" />
-          <div className="h-56 px-2 pt-4 pb-2">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={data.cumulative} margin={{ left: 4, right: 8 }}>
-                <defs>
-                  <linearGradient id="fat" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="var(--series-1)" stopOpacity={0.25} />
-                    <stop offset="100%" stopColor="var(--series-1)" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid vertical={false} stroke="var(--grid)" />
-                <XAxis dataKey="label" {...axis} minTickGap={16} />
-                <YAxis {...axis} width={64} tickFormatter={short} />
-                <Tooltip cursor={{ stroke: "var(--text-3)", strokeDasharray: "3 3" }} content={<ChartTooltip />} />
-                <Area type="monotone" dataKey="total" stroke="var(--series-1)" strokeWidth={2} fill="url(#fat)" activeDot={{ r: 4, strokeWidth: 2, stroke: "var(--surface)" }} />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        </Card>
-
-        <Card>
-          <CardHeader title="Alertas de estoque" subtitle="Produtos no mínimo ou zerados" />
-          <ul className="max-h-56 divide-y divide-line overflow-y-auto">
-            {[...out, ...low].map((p) => (
-              <li key={p.id} className="flex items-center justify-between gap-2 px-4 py-2 text-sm">
-                <span className="truncate">{p.name}</span>
-                <Badge tone={p.stock <= 0 ? "bad" : "warn"}>
-                  {p.stock <= 0 ? "Sem estoque" : `${num(p.stock)} / mín. ${num(p.minStock)}`}
-                </Badge>
-              </li>
-            ))}
-          </ul>
-        </Card>
-      </div>
-
-      {can("stock.view") && (
-        <Card className="mt-4">
-          <CardHeader
-            title="Últimas movimentações de estoque"
-            actions={
-              <a href="#/estoque" className="text-xs font-medium text-accent hover:underline">
-                Ver histórico
-              </a>
-            }
-          />
+          <CardHeader title="Clientes para lembrar" subtitle="Pela frequência de compra, já devem estar precisando de gás ou água" />
           <ul className="divide-y divide-line">
-            {movements.slice(0, 6).map((m) => {
-              const p = products.find((x) => x.id === m.productId);
+            {reminders.map(({ c, h, since, due }) => {
+              const msg = `Olá, ${c.name.split(" ")[0]}! Aqui é da ${COMPANY.tradeName}. Seu ${h.last!.items[0].name.split(" (")[0]} já está acabando? É só responder que a gente entrega! 🔥`;
               return (
-                <li key={m.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5 text-sm">
-                  <span className={`tabular w-14 font-medium ${m.quantity > 0 ? "text-good" : "text-bad"}`}>
-                    {m.quantity > 0 ? "+" : ""}
-                    {num(m.quantity)}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate">{p?.name}</span>
-                  <span className="text-xs text-fg-3">{MOVEMENT_LABELS[m.type]}</span>
-                  <span className="text-xs text-fg-3">{m.user}</span>
-                  <span className="tabular text-xs text-fg-3">{dateTime(m.at)}</span>
+                <li key={c.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5 text-sm">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-medium">{c.name}</p>
+                    <p className="text-xs text-fg-3">
+                      {h.last!.items.map((i) => `${i.quantity}× ${i.name.split(" (")[0]}`).join(", ")} · compra a cada ~{h.avgDays} dias · última há {since} dias
+                    </p>
+                  </div>
+                  <Badge tone={due > 3 ? "bad" : due >= 0 ? "warn" : "info"}>{due > 0 ? `${due} ${due === 1 ? "dia" : "dias"} de atraso` : due === 0 ? "hoje" : `em ${-due} dias`}</Badge>
+                  <a className={buttonClass("secondary", "sm")} href={`https://wa.me/55${c.phone.replace(/\D/g, "")}?text=${encodeURIComponent(msg)}`} target="_blank" rel="noreferrer">
+                    <MessageCircle className="size-3.5" /> Chamar
+                  </a>
                 </li>
               );
             })}
+            {reminders.length === 0 && <li className="px-4 py-8 text-center text-sm text-fg-3">Nenhum cliente para lembrar agora.</li>}
           </ul>
         </Card>
-      )}
+
+        <div className="space-y-4">
+          <Card>
+            <CardHeader title="Mais vendidos" subtitle={`Últimos ${period} dias`} />
+            <ul className="divide-y divide-line">
+              {chart.top.map((p, i) => (
+                <li key={p.name} className="flex items-center justify-between gap-2 px-4 py-2 text-sm">
+                  <span className="truncate">
+                    <span className="mr-1.5 text-fg-3">{i + 1}.</span>
+                    {p.name}
+                  </span>
+                  <span className="tabular shrink-0 text-right">
+                    <span className="font-medium">{brl(p.revenue)}</span>
+                    <span className="block text-[11px] text-fg-3">{num(p.qty)} un</span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </Card>
+          <Card>
+            <CardHeader title="Vendido hoje por forma de pagamento" />
+            <ul className="divide-y divide-line">
+              {methodsToday.map(([m, v]) => (
+                <li key={m} className="flex justify-between px-4 py-2 text-sm">
+                  <span className="flex items-center gap-1.5">
+                    <Receipt className="size-3.5 text-fg-3" /> {METHOD_LABELS[m as keyof typeof METHOD_LABELS]}
+                  </span>
+                  <span className="tabular font-medium">{brl(v)}</span>
+                </li>
+              ))}
+              {methodsToday.length === 0 && <li className="px-4 py-6 text-center text-sm text-fg-3">Sem vendas hoje.</li>}
+            </ul>
+          </Card>
+        </div>
+      </div>
     </>
   );
 }
